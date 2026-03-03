@@ -40,7 +40,7 @@ Replication is at the table level, not server level. Different tables can have d
 
 Each replicated table has a ZooKeeper path structure:
 
-```
+```text
 /clickhouse/tables/{shard}/{table_name}/
 ├── metadata                    # Table structure
 ├── columns                     # Column definitions
@@ -142,7 +142,7 @@ Queue queue;
 
 Key invariant (`src/Storages/MergeTree/ReplicatedMergeTreeQueue.h:88-91`):
 
-```
+```text
 virtual_parts = current_parts + queue
 ```
 
