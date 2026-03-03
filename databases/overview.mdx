@@ -1,0 +1,97 @@
+---
+title: Database Engines Overview
+description: Learn about ClickHouse database engines and how they manage table storage and replication
+---
+
+# Database Engines Overview
+
+Database engines in ClickHouse determine how tables are stored, replicated, and managed within a database. Each database engine provides different features and capabilities for organizing and managing your data.
+
+## Available Database Engines
+
+ClickHouse supports several database engine types:
+
+### Local Storage Engines
+
+- **Atomic** (default) - Production-ready engine with atomic DDL operations and UUID-based table storage
+- **Ordinary** - Legacy engine, deprecated in favor of Atomic
+- **Memory** - Stores all tables in RAM, data is lost on restart
+- **Lazy** - Keeps tables in RAM only for a specified time period after last access
+
+### Replication Engines
+
+- **Replicated** - Distributed database replication using ClickHouse Keeper or ZooKeeper
+
+### External Database Engines
+
+- **MySQL** - Maps to a remote MySQL database, automatically discovering tables
+- **PostgreSQL** - Maps to a remote PostgreSQL database
+- **MaterializedPostgreSQL** - Replicates PostgreSQL tables to ClickHouse using logical replication
+- **SQLite** - Attaches SQLite database files
+
+### Special Purpose Engines
+
+- **Filesystem** - Exposes files in a filesystem path as tables
+- **S3** - Exposes files in S3-compatible storage as tables
+- **HDFS** - Exposes files in HDFS as tables
+
+## Engine Characteristics Comparison
+
+| Feature | Atomic | Replicated | MySQL | MaterializedPostgreSQL |
+|---------|--------|------------|-------|------------------------|
+| Default Engine | Yes | No | No | No |
+| Persistent Storage | Yes | Yes | Remote | Yes (local cache) |
+| Atomic DDL | Yes | Yes | No | Yes |
+| Table UUIDs | Yes | Yes | No | Yes |
+| Replication | No | Yes | No | Yes (from PostgreSQL) |
+| ZooKeeper Required | No | Yes | No | No |
+| External Dependency | No | No | MySQL | PostgreSQL |
+
+## Choosing a Database Engine
+
+### Use Atomic when:
+- Running a single ClickHouse server or cluster without database-level replication
+- You need atomic DDL operations and table UUIDs
+- This is the default and recommended for most use cases
+
+### Use Replicated when:
+- You need automatic DDL replication across multiple ClickHouse servers
+- You want consistent schema changes across all replicas
+- You have ClickHouse Keeper or ZooKeeper available
+
+### Use MySQL when:
+- You need real-time access to MySQL tables from ClickHouse
+- You want to query MySQL data without importing it
+- Schema changes in MySQL should be automatically reflected
+
+### Use MaterializedPostgreSQL when:
+- You want to replicate PostgreSQL data to ClickHouse for analytics
+- You need automatic synchronization of data changes
+- You're building a OLAP workload on top of OLTP PostgreSQL data
+
+## Default Database Engine
+
+Since ClickHouse version 20.7, the default database engine is **Atomic**. When you create a database without specifying an engine, Atomic is used:
+
+```sql
+CREATE DATABASE my_database;
+-- Equivalent to:
+CREATE DATABASE my_database ENGINE = Atomic;
+```
+
+## Implementation Details
+
+Database engines are implemented in the `src/Databases/` directory:
+
+- `DatabaseAtomic` - Atomic engine (src/Databases/DatabaseAtomic.h:21)
+- `DatabaseReplicated` - Replicated engine (src/Databases/DatabaseReplicated.h:48)
+- `DatabaseMySQL` - MySQL engine (src/Databases/MySQL/DatabaseMySQL.h:35)
+- `DatabaseMaterializedPostgreSQL` - MaterializedPostgreSQL engine (src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.h:27)
+
+All database engines inherit from the `IDatabase` interface (src/Databases/IDatabase.h:175).
+
+## Next Steps
+
+- [Atomic Database Engine](/databases/atomic) - Learn about the default Atomic engine
+- [Replicated Database Engine](/databases/replicated) - Set up database replication
+- [Materialized Databases](/databases/materialized) - Connect to MySQL and PostgreSQL

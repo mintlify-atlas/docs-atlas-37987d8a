@@ -1,0 +1,552 @@
+---
+title: Kafka Integration
+description: Connect ClickHouse to Apache Kafka for real-time data streaming and event processing
+---
+
+ClickHouse provides native integration with Apache Kafka through the `Kafka` table engine, enabling real-time data ingestion from Kafka topics.
+
+## Kafka Table Engine
+
+The Kafka engine allows ClickHouse to consume messages from Kafka topics and automatically process them into tables.
+
+### Basic Usage
+
+```sql
+CREATE TABLE kafka_events (
+    event_id UInt64,
+    event_type String,
+    user_id String,
+    timestamp DateTime,
+    payload String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list = 'events',
+    kafka_group_name = 'clickhouse_consumer_group',
+    kafka_format = 'JSONEachRow',
+    kafka_num_consumers = 1;
+```
+
+### Complete Example with Materialized View
+
+Kafka tables are typically used with materialized views to persist data:
+
+```sql
+-- Create destination table
+CREATE TABLE events (
+    event_id UInt64,
+    event_type String,
+    user_id String,
+    timestamp DateTime,
+    payload String,
+    _offset UInt64,
+    _partition UInt64
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (event_type, timestamp);
+
+-- Create Kafka consumer table
+CREATE TABLE kafka_events (
+    event_id UInt64,
+    event_type String,
+    user_id String,
+    timestamp DateTime,
+    payload String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-broker-1:9092,kafka-broker-2:9092',
+    kafka_topic_list = 'events,user_events',
+    kafka_group_name = 'clickhouse_events_consumer',
+    kafka_format = 'JSONEachRow',
+    kafka_num_consumers = 3,
+    kafka_thread_per_consumer = 1,
+    kafka_max_block_size = 65536,
+    kafka_poll_timeout_ms = 5000,
+    kafka_flush_interval_ms = 7500;
+
+-- Create materialized view to move data
+CREATE MATERIALIZED VIEW events_mv TO events AS
+SELECT 
+    event_id,
+    event_type,
+    user_id,
+    timestamp,
+    payload,
+    _offset,
+    _partition
+FROM kafka_events;
+```
+
+## Kafka Settings
+
+### Connection Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `kafka_broker_list` | Comma-separated list of Kafka brokers | Required |
+| `kafka_topic_list` | Comma-separated list of Kafka topics | Required |
+| `kafka_group_name` | Consumer group ID | Required |
+| `kafka_client_id` | Client identifier | Auto-generated |
+
+### Consumer Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `kafka_num_consumers` | Number of consumers per table | 1 |
+| `kafka_thread_per_consumer` | Independent thread for each consumer | false |
+| `kafka_max_block_size` | Rows per block | `max_insert_block_size` |
+| `kafka_poll_timeout_ms` | Timeout for single poll | `stream_poll_timeout_ms` |
+| `kafka_poll_max_batch_size` | Max messages per poll | 0 (unlimited) |
+| `kafka_flush_interval_ms` | Data flush interval | `stream_flush_interval_ms` |
+| `kafka_consumer_reschedule_ms` | Consumer reschedule interval | 500 |
+
+### Format Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `kafka_format` | Message format | Required |
+| `kafka_schema` | Schema identifier for schema-based formats | Empty |
+| `kafka_schema_registry_skip_bytes` | Bytes to skip from message start (e.g., 5 for Confluent) | 0 |
+| `kafka_max_rows_per_message` | Max rows per message for production | 1 |
+
+### Error Handling
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `kafka_handle_error_mode` | Error handling mode: `default`, `stream`, `dead_letter_queue` | `default` |
+| `kafka_skip_broken_messages` | Number of broken messages to skip per block | 0 |
+| `kafka_commit_every_batch` | Commit after each batch | false |
+| `kafka_commit_on_select` | Commit on SELECT queries | false |
+
+### Security Settings
+
+| Setting | Description |
+|---------|-------------|
+| `kafka_security_protocol` | Protocol: `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL` |
+| `kafka_sasl_mechanism` | SASL mechanism: `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, `OAUTHBEARER` |
+| `kafka_sasl_username` | SASL username |
+| `kafka_sasl_password` | SASL password |
+
+### Compression Settings
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `kafka_compression_codec` | Compression: `none`, `gzip`, `snappy`, `lz4`, `zstd` | Empty |
+| `kafka_compression_level` | Compression level (-1 for default) | -1 |
+
+## Configuration Examples
+
+### Multiple Topics
+
+```sql
+CREATE TABLE kafka_multi_topic (
+    message String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'broker1:9092,broker2:9092',
+    kafka_topic_list = 'topic1,topic2,topic3',
+    kafka_group_name = 'multi_topic_consumer',
+    kafka_format = 'JSONEachRow';
+```
+
+### With Schema Registry (Confluent)
+
+```sql
+CREATE TABLE kafka_avro (
+    event_id UInt64,
+    event_data String,
+    created_at DateTime
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka:9092',
+    kafka_topic_list = 'avro_events',
+    kafka_group_name = 'avro_consumer',
+    kafka_format = 'Avro',
+    kafka_schema_registry_skip_bytes = 5,
+    format_avro_schema_registry_url = 'http://schema-registry:8081';
+```
+
+### High-Throughput Configuration
+
+```sql
+CREATE TABLE kafka_high_throughput (
+    id UInt64,
+    data String,
+    timestamp DateTime
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-cluster:9092',
+    kafka_topic_list = 'high_volume_topic',
+    kafka_group_name = 'high_throughput_consumer',
+    kafka_format = 'Native',
+    kafka_num_consumers = 8,
+    kafka_thread_per_consumer = 1,
+    kafka_max_block_size = 1048576,
+    kafka_poll_max_batch_size = 100000,
+    kafka_poll_timeout_ms = 1000,
+    kafka_flush_interval_ms = 1000,
+    kafka_compression_codec = 'lz4';
+```
+
+### Secure Connection (SASL/SSL)
+
+```sql
+CREATE TABLE kafka_secure (
+    data String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'secure-kafka:9093',
+    kafka_topic_list = 'secure_topic',
+    kafka_group_name = 'secure_consumer',
+    kafka_format = 'JSONEachRow',
+    kafka_security_protocol = 'SASL_SSL',
+    kafka_sasl_mechanism = 'SCRAM-SHA-256',
+    kafka_sasl_username = 'clickhouse_user',
+    kafka_sasl_password = 'secure_password';
+```
+
+### Error Handling with Virtual Columns
+
+```sql
+-- Kafka table with error handling
+CREATE TABLE kafka_with_errors (
+    id UInt64,
+    data String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka:9092',
+    kafka_topic_list = 'events',
+    kafka_group_name = 'error_handling_consumer',
+    kafka_format = 'JSONEachRow',
+    kafka_handle_error_mode = 'stream';
+
+-- Destination with error columns
+CREATE TABLE events_with_errors (
+    id UInt64,
+    data String,
+    _error String,
+    _raw_message String,
+    _topic String,
+    _partition UInt64,
+    _offset UInt64
+) ENGINE = MergeTree()
+ORDER BY (id, _offset);
+
+-- Materialized view with error handling
+CREATE MATERIALIZED VIEW events_with_errors_mv TO events_with_errors AS
+SELECT 
+    id,
+    data,
+    _error,
+    _raw_message,
+    _topic,
+    _partition,
+    _offset
+FROM kafka_with_errors;
+```
+
+## Virtual Columns
+
+Kafka tables provide virtual columns with message metadata:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_topic` | String | Topic name |
+| `_partition` | UInt64 | Partition number |
+| `_offset` | UInt64 | Message offset |
+| `_timestamp` | DateTime | Message timestamp |
+| `_key` | String | Message key |
+| `_headers.name` | Array(String) | Header names |
+| `_headers.value` | Array(String) | Header values |
+| `_raw_message` | String | Raw message (error mode: stream) |
+| `_error` | String | Error message (error mode: stream) |
+
+### Using Virtual Columns
+
+```sql
+CREATE MATERIALIZED VIEW kafka_metadata_mv TO events AS
+SELECT 
+    *,
+    _topic AS source_topic,
+    _partition AS source_partition,
+    _offset AS source_offset,
+    _timestamp AS kafka_timestamp,
+    _key AS message_key
+FROM kafka_events;
+```
+
+## Advanced Patterns
+
+### Data Transformation
+
+<CodeGroup>
+```sql JSON Parsing
+CREATE MATERIALIZED VIEW events_parsed_mv TO events AS
+SELECT 
+    JSONExtractUInt(payload, 'id') AS event_id,
+    JSONExtractString(payload, 'type') AS event_type,
+    JSONExtractString(payload, 'user') AS user_id,
+    toDateTime(JSONExtractUInt(payload, 'timestamp')) AS event_time
+FROM kafka_raw_events;
+```
+
+```sql Filtering
+CREATE MATERIALIZED VIEW important_events_mv TO important_events AS
+SELECT *
+FROM kafka_events
+WHERE event_type IN ('purchase', 'signup', 'conversion');
+```
+
+```sql Aggregation
+CREATE MATERIALIZED VIEW event_stats_mv TO event_stats AS
+SELECT 
+    event_type,
+    toStartOfMinute(timestamp) AS minute,
+    count() AS event_count,
+    uniq(user_id) AS unique_users
+FROM kafka_events
+GROUP BY event_type, minute;
+```
+</CodeGroup>
+
+### Multiple Destinations
+
+```sql
+-- Send to multiple tables based on conditions
+CREATE MATERIALIZED VIEW user_events_mv TO user_events AS
+SELECT * FROM kafka_events WHERE event_type LIKE 'user_%';
+
+CREATE MATERIALIZED VIEW system_events_mv TO system_events AS
+SELECT * FROM kafka_events WHERE event_type LIKE 'system_%';
+
+CREATE MATERIALIZED VIEW error_events_mv TO error_events AS
+SELECT * FROM kafka_events WHERE event_type = 'error';
+```
+
+### Exactly-Once Semantics
+
+```sql
+-- Using Keeper for distributed coordination
+CREATE TABLE kafka_exactly_once (
+    id UInt64,
+    data String,
+    timestamp DateTime
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka:9092',
+    kafka_topic_list = 'events',
+    kafka_group_name = 'exactly_once_consumer',
+    kafka_format = 'JSONEachRow',
+    kafka_keeper_path = '/clickhouse/kafka/exactly_once',
+    kafka_replica_name = '{replica}',
+    kafka_commit_every_batch = 1;
+```
+
+## Data Formats
+
+Kafka integration supports all ClickHouse formats:
+
+<CodeGroup>
+```sql JSONEachRow
+kafka_format = 'JSONEachRow'
+-- Message: {"id": 1, "name": "event1"}
+```
+
+```sql CSV
+kafka_format = 'CSV'
+-- Message: 1,"event1","2026-03-01 10:00:00"
+```
+
+```sql Avro
+kafka_format = 'Avro'
+kafka_schema_registry_skip_bytes = 5
+format_avro_schema_registry_url = 'http://schema-registry:8081'
+```
+
+```sql Protobuf
+kafka_format = 'Protobuf'
+kafka_schema = 'schema.proto:MessageType'
+```
+
+```sql Parquet
+kafka_format = 'Parquet'
+-- Useful for batch messages
+```
+</CodeGroup>
+
+## Producing to Kafka
+
+ClickHouse can also produce messages to Kafka:
+
+```sql
+-- Create Kafka output table
+CREATE TABLE kafka_output (
+    id UInt64,
+    event_type String,
+    data String
+) ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka:9092',
+    kafka_topic_list = 'output_topic',
+    kafka_format = 'JSONEachRow',
+    kafka_compression_codec = 'lz4';
+
+-- Insert data (will be sent to Kafka)
+INSERT INTO kafka_output VALUES 
+    (1, 'processed', '{"result": "success"}'),
+    (2, 'processed', '{"result": "success"}');
+
+-- Stream from another table
+INSERT INTO kafka_output 
+SELECT id, event_type, data 
+FROM processed_events 
+WHERE timestamp > now() - INTERVAL 1 HOUR;
+```
+
+## Monitoring
+
+### Check Consumer Status
+
+```sql
+-- View active consumers
+SELECT 
+    database,
+    table,
+    name,
+    status,
+    is_active,
+    last_exception
+FROM system.kafka_consumers;
+```
+
+### Monitor Lag
+
+```sql
+-- Check offset lag
+SELECT 
+    topic,
+    partition,
+    consumer_id,
+    committed_offset,
+    log_end_offset,
+    log_end_offset - committed_offset AS lag
+FROM system.kafka_consumers;
+```
+
+### View Statistics
+
+```sql
+-- Consumer performance metrics
+SELECT 
+    event,
+    value
+FROM system.events
+WHERE event LIKE '%Kafka%'
+ORDER BY event;
+
+-- Messages read
+SELECT value FROM system.events WHERE event = 'KafkaMessagesRead';
+
+-- Messages failed
+SELECT value FROM system.events WHERE event = 'KafkaMessagesFailed';
+```
+
+## Best Practices
+
+### Performance Optimization
+
+1. **Use Multiple Consumers for High Throughput**
+   ```sql
+   kafka_num_consumers = 8,
+   kafka_thread_per_consumer = 1
+   ```
+
+2. **Optimize Batch Size**
+   ```sql
+   kafka_max_block_size = 1048576,
+   kafka_poll_max_batch_size = 100000
+   ```
+
+3. **Enable Compression**
+   ```sql
+   kafka_compression_codec = 'lz4'
+   ```
+
+4. **Use Native Format for Best Performance**
+   ```sql
+   kafka_format = 'Native'
+   ```
+
+### Reliability
+
+1. **Enable Error Handling**
+   ```sql
+   kafka_handle_error_mode = 'stream'
+   ```
+
+2. **Use Keeper for Coordination**
+   ```sql
+   kafka_keeper_path = '/clickhouse/kafka/consumers',
+   kafka_replica_name = '{replica}'
+   ```
+
+3. **Commit Every Batch for Critical Data**
+   ```sql
+   kafka_commit_every_batch = 1
+   ```
+
+### Schema Evolution
+
+```sql
+-- Use flexible schema for JSON
+CREATE TABLE kafka_flexible (
+    data String  -- Store raw JSON
+) ENGINE = Kafka
+SETTINGS kafka_format = 'JSONAsString';
+
+-- Parse in materialized view
+CREATE MATERIALIZED VIEW parsed_events_mv TO events AS
+SELECT 
+    JSONExtractString(data, 'id') AS id,
+    JSONExtractString(data, 'type') AS type,
+    data AS raw_data
+FROM kafka_flexible;
+```
+
+## Troubleshooting
+
+### Consumer Not Reading
+
+```sql
+-- Check table status
+SELECT * FROM system.kafka_consumers WHERE table = 'kafka_events';
+
+-- Restart consumers
+SYSTEM RESTART KAFKA kafka_events;
+```
+
+### High Lag
+
+```sql
+-- Increase consumers
+ALTER TABLE kafka_events MODIFY SETTING kafka_num_consumers = 16;
+
+-- Increase batch size
+ALTER TABLE kafka_events MODIFY SETTING kafka_max_block_size = 2097152;
+```
+
+### Message Format Errors
+
+```sql
+-- Use error handling mode
+ALTER TABLE kafka_events MODIFY SETTING kafka_handle_error_mode = 'stream';
+
+-- Query errors
+SELECT _error, _raw_message FROM kafka_events WHERE _error != '';
+```
+
+## See Also
+
+- [Data Formats](/integration/data-formats) - Supported message formats
+- [Client Libraries](/integration/client-libraries) - Connection interfaces
+- [PostgreSQL Integration](/integration/postgresql) - Alternative integration

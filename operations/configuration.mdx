@@ -1,0 +1,274 @@
+---
+title: Server Configuration
+description: Understanding ClickHouse server configuration files and structure
+---
+
+ClickHouse server configuration is managed through XML files that define server behavior, network settings, logging, and resource allocation.
+
+## Configuration File Structure
+
+ClickHouse uses a hierarchical configuration system with the following main files:
+
+- `config.xml` - Main server configuration file
+- `users.xml` - User accounts, profiles, and quotas
+- `config.d/*.xml` - Additional configuration overrides
+- `users.d/*.xml` - Additional user configuration overrides
+
+### Configuration Priority
+
+Files in `config.d/` and `users.d/` directories override settings in the main files, allowing modular configuration management.
+
+## Main Configuration File (config.xml)
+
+The main configuration file is located at `/etc/clickhouse-server/config.xml` and contains server-wide settings.
+
+### Network and Port Configuration
+
+```xml
+<clickhouse>
+    <!-- HTTP API port -->
+    <http_port>8123</http_port>
+    
+    <!-- Native TCP protocol port -->
+    <tcp_port>9000</tcp_port>
+    
+    <!-- MySQL protocol compatibility -->
+    <mysql_port>9004</mysql_port>
+    
+    <!-- PostgreSQL protocol compatibility -->
+    <postgresql_port>9005</postgresql_port>
+    
+    <!-- Secure connections -->
+    <https_port>8443</https_port>
+    <tcp_port_secure>9440</tcp_port_secure>
+    
+    <!-- Inter-server HTTP port for replication -->
+    <interserver_http_port>9009</interserver_http_port>
+</clickhouse>
+```
+
+### Listen Addresses
+
+<Warning>
+Be cautious when opening ClickHouse to external networks. Always implement proper security measures.
+</Warning>
+
+```xml
+<clickhouse>
+    <!-- Listen on localhost only (default) -->
+    <listen_host>127.0.0.1</listen_host>
+    <listen_host>::1</listen_host>
+    
+    <!-- Listen on all interfaces -->
+    <!-- <listen_host>::</listen_host> -->
+    <!-- <listen_host>0.0.0.0</listen_host> -->
+</clickhouse>
+```
+
+### Logging Configuration
+
+```xml
+<clickhouse>
+    <logger>
+        <!-- Log levels: none, fatal, critical, error, warning, notice, information, debug, trace -->
+        <level>trace</level>
+        
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        
+        <!-- Log rotation -->
+        <size>1000M</size>
+        <count>10</count>
+        
+        <!-- Console logging -->
+        <!-- <console>1</console> -->
+        
+        <!-- JSON log formatting -->
+        <!--
+        <formatting>
+            <type>json</type>
+            <names>
+                <date_time>date_time</date_time>
+                <thread_name>thread_name</thread_name>
+                <level>level</level>
+                <query_id>query_id</query_id>
+                <logger_name>logger_name</logger_name>
+                <message>message</message>
+            </names>
+        </formatting>
+        -->
+    </logger>
+</clickhouse>
+```
+
+### Data Storage Paths
+
+```xml
+<clickhouse>
+    <!-- Main data directory -->
+    <path>/var/lib/clickhouse/</path>
+    
+    <!-- Temporary data directory -->
+    <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
+    
+    <!-- User files directory -->
+    <user_files_path>/var/lib/clickhouse/user_files/</user_files_path>
+    
+    <!-- Custom cached disks base directory -->
+    <custom_cached_disks_base_directory>/var/lib/clickhouse/caches/</custom_cached_disks_base_directory>
+</clickhouse>
+```
+
+### Memory and Performance Settings
+
+```xml
+<clickhouse>
+    <!-- Maximum concurrent queries -->
+    <max_concurrent_queries>1000</max_concurrent_queries>
+    
+    <!-- Maximum server memory usage (0 = auto) -->
+    <max_server_memory_usage>0</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0.9</max_server_memory_usage_to_ram_ratio>
+    
+    <!-- Thread pool settings -->
+    <max_thread_pool_size>10000</max_thread_pool_size>
+    <concurrent_threads_soft_limit_num>0</concurrent_threads_soft_limit_num>
+    <concurrent_threads_soft_limit_ratio_to_cores>2</concurrent_threads_soft_limit_ratio_to_cores>
+    
+    <!-- Cache sizes -->
+    <uncompressed_cache_size>8589934592</uncompressed_cache_size>
+    <mark_cache_size>5368709120</mark_cache_size>
+    <query_condition_cache_size>106700800</query_condition_cache_size>
+</clickhouse>
+```
+
+### Storage Configuration
+
+Multi-disk configuration for data storage:
+
+```xml
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <default>
+                <keep_free_space_bytes>0</keep_free_space_bytes>
+            </default>
+            
+            <data>
+                <path>/data/</path>
+                <keep_free_space_bytes>0</keep_free_space_bytes>
+            </data>
+            
+            <s3>
+                <type>s3</type>
+                <endpoint>http://path/to/endpoint</endpoint>
+                <access_key_id>your_access_key_id</access_key_id>
+                <secret_access_key>your_secret_access_key</secret_access_key>
+            </s3>
+            
+            <azure_blob>
+                <type>azure_blob_storage</type>
+                <storage_account_url>http://account.blob.core.windows.net</storage_account_url>
+                <container_name>container</container_name>
+                <account_name>account</account_name>
+                <account_key>pass123</account_key>
+            </azure_blob>
+        </disks>
+        
+        <policies>
+            <all>
+                <volumes>
+                    <main>
+                        <disk>default</disk>
+                        <disk>data</disk>
+                        <disk>s3</disk>
+                    </main>
+                </volumes>
+            </all>
+        </policies>
+    </storage_configuration>
+</clickhouse>
+```
+
+## SSL/TLS Configuration
+
+```xml
+<clickhouse>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/clickhouse-server/server.crt</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/server.key</privateKeyFile>
+            <dhParamsFile>/etc/clickhouse-server/dhparam.pem</dhParamsFile>
+            <verificationMode>none</verificationMode>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+        </server>
+        
+        <client>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+            <disableProtocols>sslv2,sslv3</disableProtocols>
+            <preferServerCiphers>true</preferServerCiphers>
+        </client>
+    </openSSL>
+</clickhouse>
+```
+
+## Configuration Overrides
+
+Use the `config.d/` directory for modular configuration:
+
+**config.d/listen.xml**:
+```xml
+<clickhouse>
+    <listen_host>::</listen_host>
+</clickhouse>
+```
+
+**config.d/macros.xml**:
+```xml
+<clickhouse>
+    <macros>
+        <cluster>my_cluster</cluster>
+        <shard>01</shard>
+        <replica>replica1</replica>
+    </macros>
+</clickhouse>
+```
+
+## gRPC Configuration
+
+```xml
+<clickhouse>
+    <grpc_port>9100</grpc_port>
+    <grpc>
+        <enable_ssl>false</enable_ssl>
+        <ssl_cert_file>/path/to/ssl_cert_file</ssl_cert_file>
+        <ssl_key_file>/path/to/ssl_key_file</ssl_key_file>
+        <ssl_require_client_auth>false</ssl_require_client_auth>
+        <transport_compression_type>none</transport_compression_type>
+        <transport_compression_level>0</transport_compression_level>
+        <max_send_message_size>-1</max_send_message_size>
+        <max_receive_message_size>-1</max_receive_message_size>
+    </grpc>
+</clickhouse>
+```
+
+## Validating Configuration
+
+Test configuration without starting the server:
+
+```bash
+clickhouse-server --config-file=/etc/clickhouse-server/config.xml --test
+```
+
+## Best Practices
+
+1. **Use configuration overrides** - Place customizations in `config.d/` instead of modifying the main config
+2. **Version control** - Keep configuration files in version control
+3. **Secure sensitive data** - Use environment variables or secure vaults for credentials
+4. **Test changes** - Always test configuration changes before applying to production
+5. **Document customizations** - Add comments explaining non-standard settings
+6. **Monitor resource usage** - Adjust memory and thread settings based on workload

@@ -1,0 +1,483 @@
+---
+title: String Functions
+description: Functions for manipulating and processing strings in ClickHouse
+---
+
+ClickHouse provides a rich set of string manipulation functions for working with text data, including concatenation, substring extraction, case conversion, and pattern matching.
+
+## String Concatenation
+
+### concat
+
+Concatenates multiple values into a single string.
+
+```sql
+SELECT concat('Hello', ' ', 'World');
+-- Result: 'Hello World'
+
+SELECT concat('Value: ', 42);
+-- Result: 'Value: 42'
+
+-- Works with various types
+SELECT concat('Date: ', today());
+-- Result: 'Date: 2026-03-03'
+
+SELECT concat('With ', materialize(42), ' items');
+```
+
+### concatWithSeparator
+
+Concatenates strings with a separator.
+
+```sql
+SELECT concatWithSeparator(', ', 'apple', 'banana', 'orange');
+-- Result: 'apple, banana, orange'
+
+SELECT concatWithSeparator('-', '2023', '12', '25');
+-- Result: '2023-12-25'
+```
+
+## Substring Operations
+
+### substring
+
+Extracts a substring from a string.
+
+```sql
+-- substring(string, offset, length)
+SELECT substring('Hello World', 1, 5);
+-- Result: 'Hello'
+
+SELECT substring('Hello World', 7);
+-- Result: 'World' (from position 7 to end)
+
+SELECT substring('Hello World', -5, 5);
+-- Result: 'World' (negative offset counts from end)
+```
+
+### substringUTF8
+
+UTF-8 aware substring extraction.
+
+```sql
+SELECT substringUTF8('Привет', 1, 3);
+-- Result: 'Прі' (counts Unicode characters, not bytes)
+```
+
+### substringIndex
+
+Returns substring before/after the nth occurrence of a delimiter.
+
+```sql
+SELECT substringIndex('www.example.com', '.', 1);
+-- Result: 'www'
+
+SELECT substringIndex('www.example.com', '.', 2);
+-- Result: 'www.example'
+
+SELECT substringIndex('www.example.com', '.', -1);
+-- Result: 'com' (negative counts from end)
+```
+
+## Case Conversion
+
+### lower
+
+Converts string to lowercase.
+
+```sql
+SELECT lower('Hello World');
+-- Result: 'hello world'
+
+SELECT lower('UPPERCASE');
+-- Result: 'uppercase'
+```
+
+### upper
+
+Converts string to uppercase.
+
+```sql
+SELECT upper('Hello World');
+-- Result: 'HELLO WORLD'
+
+SELECT upper('lowercase');
+-- Result: 'LOWERCASE'
+```
+
+### lowerUTF8 / upperUTF8
+
+UTF-8 aware case conversion.
+
+```sql
+SELECT lowerUTF8('ПРИВЕТ');
+-- Result: 'привет'
+
+SELECT upperUTF8('привет');
+-- Result: 'ПРИВЕТ'
+```
+
+## String Length
+
+### length
+
+Returns the length of a string in bytes.
+
+```sql
+SELECT length('Hello');
+-- Result: 5
+
+SELECT length('Hello World');
+-- Result: 11
+```
+
+### lengthUTF8
+
+Returns the length in Unicode characters.
+
+```sql
+SELECT lengthUTF8('Hello');
+-- Result: 5
+
+SELECT lengthUTF8('Привет');
+-- Result: 6 (counts characters, not bytes)
+
+SELECT length('Привет');
+-- Result: 12 (bytes in UTF-8)
+```
+
+## Trimming and Padding
+
+### trim
+
+Removes leading and trailing whitespace.
+
+```sql
+SELECT trim('  Hello World  ');
+-- Result: 'Hello World'
+```
+
+### trimLeft / trimRight
+
+Removes whitespace from one side.
+
+```sql
+SELECT trimLeft('  Hello');
+-- Result: 'Hello'
+
+SELECT trimRight('Hello  ');
+-- Result: 'Hello'
+```
+
+### trimBoth
+
+Removes specified characters from both ends.
+
+```sql
+SELECT trimBoth('xxxHelloxxx', 'x');
+-- Result: 'Hello'
+```
+
+## String Replacement
+
+### replace
+
+Replaces all occurrences of a substring.
+
+```sql
+SELECT replace('Hello World', 'World', 'ClickHouse');
+-- Result: 'Hello ClickHouse'
+
+SELECT replace('banana', 'a', 'o');
+-- Result: 'bonono'
+```
+
+### replaceOne
+
+Replaces only the first occurrence.
+
+```sql
+SELECT replaceOne('banana', 'a', 'o');
+-- Result: 'bonana'
+```
+
+### replaceAll
+
+Alias for `replace`, replaces all occurrences.
+
+```sql
+SELECT replaceAll('test test test', 'test', 'demo');
+-- Result: 'demo demo demo'
+```
+
+### replaceRegexpOne
+
+Replaces the first match of a regular expression.
+
+```sql
+SELECT replaceRegexpOne('Hello123World456', '\\d+', 'NUM');
+-- Result: 'HelloNUMWorld456'
+```
+
+### replaceRegexpAll
+
+Replaces all matches of a regular expression.
+
+```sql
+SELECT replaceRegexpAll('Hello123World456', '\\d+', 'NUM');
+-- Result: 'HelloNUMWorldNUM'
+```
+
+## String Splitting
+
+### splitByChar
+
+Splits string by a single character.
+
+```sql
+SELECT splitByChar(',', 'apple,banana,orange');
+-- Result: ['apple','banana','orange']
+```
+
+### splitByString
+
+Splits string by a substring.
+
+```sql
+SELECT splitByString(' - ', 'one - two - three');
+-- Result: ['one','two','three']
+```
+
+### splitByRegexp
+
+Splits string by a regular expression.
+
+```sql
+SELECT splitByRegexp('\\s+', 'one  two   three');
+-- Result: ['one','two','three']
+```
+
+## Pattern Matching
+
+### like
+
+SQL LIKE pattern matching.
+
+```sql
+SELECT 'Hello World' LIKE '%World';
+-- Result: 1
+
+SELECT 'abc123' LIKE 'abc%';
+-- Result: 1
+
+SELECT 'test' LIKE 't_st';
+-- Result: 1 (_ matches single character)
+```
+
+### ilike
+
+Case-insensitive LIKE.
+
+```sql
+SELECT 'Hello World' ILIKE '%world';
+-- Result: 1
+```
+
+### match
+
+Regular expression matching.
+
+```sql
+SELECT match('abc123', '\\d+');
+-- Result: 1
+
+SELECT match('test@example.com', '^[\\w\\.]+@[\\w\\.]+$');
+-- Result: 1
+```
+
+## String Extraction
+
+### extract
+
+Extracts a substring matching a regular expression.
+
+```sql
+SELECT extract('price: $42.50', '\\$[0-9.]+');
+-- Result: '$42.50'
+```
+
+### extractAll
+
+Extracts all matching substrings.
+
+```sql
+SELECT extractAll('Phone: 123-456-7890 or 098-765-4321', '\\d{3}-\\d{3}-\\d{4}');
+-- Result: ['123-456-7890','098-765-4321']
+```
+
+## String Reversal
+
+### reverse
+
+Reverses a string.
+
+```sql
+SELECT reverse('Hello');
+-- Result: 'olleH'
+```
+
+### reverseUTF8
+
+Reverses UTF-8 string by characters.
+
+```sql
+SELECT reverseUTF8('Привет');
+-- Result: 'тевирП'
+```
+
+## String Position
+
+### position
+
+Finds the position of a substring.
+
+```sql
+SELECT position('Hello World', 'World');
+-- Result: 7
+
+SELECT position('Hello World', 'xyz');
+-- Result: 0 (not found)
+```
+
+### positionUTF8
+
+UTF-8 aware position search.
+
+```sql
+SELECT positionUTF8('Привет мир', 'мир');
+-- Result: 8
+```
+
+## String Checking
+
+### empty
+
+Checks if string is empty.
+
+```sql
+SELECT empty('');
+-- Result: 1
+
+SELECT empty('hello');
+-- Result: 0
+```
+
+### notEmpty
+
+Checks if string is not empty.
+
+```sql
+SELECT notEmpty('hello');
+-- Result: 1
+```
+
+### startsWith
+
+Checks if string starts with a prefix.
+
+```sql
+SELECT startsWith('Hello World', 'Hello');
+-- Result: 1
+```
+
+### endsWith
+
+Checks if string ends with a suffix.
+
+```sql
+SELECT endsWith('Hello World', 'World');
+-- Result: 1
+```
+
+## Encoding Functions
+
+### base64Encode / base64Decode
+
+Base64 encoding and decoding.
+
+```sql
+SELECT base64Encode('Hello World');
+-- Result: 'SGVsbG8gV29ybGQ='
+
+SELECT base64Decode('SGVsbG8gV29ybGQ=');
+-- Result: 'Hello World'
+```
+
+### hex / unhex
+
+Hexadecimal encoding and decoding.
+
+```sql
+SELECT hex('Hello');
+-- Result: '48656C6C6F'
+
+SELECT unhex('48656C6C6F');
+-- Result: 'Hello'
+```
+
+## Repeat and Format
+
+### repeat
+
+Repeats a string n times.
+
+```sql
+SELECT repeat('abc', 3);
+-- Result: 'abcabcabc'
+
+SELECT repeat('-', 10);
+-- Result: '----------'
+```
+
+### format
+
+Formats a string with placeholders.
+
+```sql
+SELECT format('Hello {}, you are {} years old', 'Alice', 25);
+-- Result: 'Hello Alice, you are 25 years old'
+```
+
+## Performance Tips
+
+1. **Use byte-based functions** when working with ASCII-only strings (faster than UTF-8 versions)
+2. **Prefer `splitByChar`** over `splitByString` for single character delimiters
+3. **Use `startsWith`/`endsWith`** instead of LIKE patterns when checking prefixes/suffixes
+4. **Regular expressions are powerful** but slower than simple string operations
+
+## Common Use Cases
+
+```sql
+-- Parse log entries
+SELECT 
+    substringIndex(log_line, ' ', 1) as timestamp,
+    extract(log_line, '\\[(\\w+)\\]') as level
+FROM logs;
+
+-- Clean and normalize data
+SELECT 
+    lower(trim(email)) as normalized_email,
+    replaceAll(phone, '-', '') as clean_phone
+FROM users;
+
+-- Extract domains from URLs
+SELECT 
+    substringIndex(substringIndex(url, '/', 3), '/', -1) as domain
+FROM web_visits;
+```
+
+## See Also
+
+- [Regular Expression Functions](https://clickhouse.com/docs/en/sql-reference/functions/string-functions)
+- [Type Conversion Functions](/functions/type-conversion)
+- [Array Functions](/functions/array)

@@ -1,0 +1,345 @@
+---
+title: Query Performance Tuning
+description: Techniques for optimizing query performance in ClickHouse
+---
+
+## Overview
+
+Query performance in ClickHouse depends on table structure, index design, and runtime settings. This guide covers techniques to optimize query execution.
+
+## Primary Key Design
+
+### Choosing the Right Order
+
+The `ORDER BY` clause defines the primary key and determines query performance:
+
+```sql
+CREATE TABLE events (
+    timestamp DateTime,
+    user_id UInt64,
+    event_type String,
+    properties String
+)
+ENGINE = MergeTree
+ORDER BY (user_id, timestamp);
+```
+
+**Best Practices:**
+- Put low-cardinality columns first for better filtering
+- Order by columns used in WHERE clauses
+- Consider query patterns when choosing order
+
+### Index Granularity Impact
+
+Smaller granularity improves filtering but increases index size:
+
+```sql
+SETTINGS index_granularity = 8192;  -- Default, good for most cases
+```
+
+For tables with very selective queries:
+```sql
+SETTINGS index_granularity = 4096;  -- Finer granularity
+```
+
+<Tip>
+Monitor the `marks` column in `system.parts` to understand index overhead. Each mark represents one granule in the primary index.
+</Tip>
+
+## Data Skipping Indexes
+
+### MinMax Indexes
+
+Efficient for range queries:
+
+```sql
+ALTER TABLE events 
+ADD INDEX idx_timestamp timestamp TYPE minmax GRANULARITY 4;
+```
+
+### Bloom Filter Indexes
+
+Excellent for equality checks on high-cardinality columns:
+
+```sql
+ALTER TABLE events
+ADD INDEX idx_event_type event_type TYPE bloom_filter GRANULARITY 4;
+```
+
+### Set Indexes
+
+Optimal for columns with moderate cardinality:
+
+```sql
+ALTER TABLE events
+ADD INDEX idx_user_segments user_segment TYPE set(100) GRANULARITY 4;
+```
+
+<Tip>
+Skipping indexes work at the granule level defined by `GRANULARITY`. Setting `GRANULARITY 4` means the index evaluates every 4 × `index_granularity` rows.
+</Tip>
+
+## Reading Optimization
+
+### Controlling Read Block Size
+
+While not a MergeTree setting, these query-level settings affect read performance:
+
+```sql
+SET max_block_size = 65536;          -- Rows per block
+SET max_insert_block_size = 1048576; -- Rows per insert block
+```
+
+### Mark Cache
+
+ClickHouse caches index marks in `MarkCache` defined in `src/Storages/MarkCache.h`. The cache is shared across queries and helps avoid repeated reads of mark files.
+
+**Server configuration:**
+```xml
+<mark_cache_size>5368709120</mark_cache_size>  <!-- 5GB -->
+```
+
+## Merge Strategy Optimization
+
+### Merge Selector Algorithm
+
+Control how parts are selected for merging:
+
+```sql
+SETTINGS
+    merge_selector_window_size = 1000,
+    merge_selector_blurry_base_scale_factor = 0;
+```
+
+From `src/Storages/MergeTree/MergeTreeSettings.cpp`:
+- `merge_selector_window_size`: How many parts to look at once
+- `merge_selector_blurry_base_scale_factor`: Controls reaction time relative to partition part count
+
+### Parallel Merge Writing
+
+```sql
+SETTINGS
+    max_merge_delayed_streams_for_parallel_write = 40;
+```
+
+For vertical merges, controls how many column streams can flush in parallel.
+
+## Lightweight Delete Optimization
+
+For tables using lightweight deletes:
+
+```sql
+SETTINGS
+    vertical_merge_optimize_lightweight_delete = true;
+```
+
+Optimizes lightweight deletes during vertical merge operations instead of forcing horizontal merges.
+
+## TTL Optimization
+
+### TTL Merge Frequency
+
+```sql
+SETTINGS
+    merge_with_ttl_timeout = 14400,              -- 4 hours
+    merge_with_recompression_ttl_timeout = 14400,
+    ttl_only_drop_parts = false;
+```
+
+**When to use `ttl_only_drop_parts = true`:**
+- Entire parts consistently expire together
+- You want to avoid merge overhead for TTL cleanup
+- Parts align with TTL boundaries
+
+### Concurrent TTL Merges
+
+```sql
+SETTINGS
+    max_number_of_merges_with_ttl_in_pool = 2,
+    max_replicated_merges_with_ttl_in_queue = 1;
+```
+
+Limits concurrent TTL merges to preserve resources for regular merges.
+
+## Query Execution Settings
+
+### Read-in-Order Optimization
+
+ClickHouse can optimize queries when ORDER BY matches the table's sort order. The `ReadInOrderOptimizer` (from `src/Storages/ReadInOrderOptimizer.cpp`) automatically applies this optimization.
+
+```sql
+-- Efficient: matches table order
+SELECT * FROM events 
+WHERE user_id = 12345 
+ORDER BY user_id, timestamp;
+
+-- Less efficient: different order
+SELECT * FROM events 
+WHERE user_id = 12345 
+ORDER BY timestamp;
+```
+
+### Parallel Query Execution
+
+While not MergeTree-specific, these affect query performance:
+
+```sql
+SET max_threads = 8;  -- Parallel execution threads
+```
+
+## Projection Optimization
+
+Projections create hidden pre-aggregated tables:
+
+```sql
+ALTER TABLE events
+ADD PROJECTION events_by_type
+(
+    SELECT event_type, count()
+    GROUP BY event_type
+);
+```
+
+ClickHouse automatically uses projections when beneficial. Monitor with:
+```sql
+SELECT name, type FROM system.projections WHERE table = 'events';
+```
+
+## Monitoring Query Performance
+
+### System Tables
+
+Monitor query execution:
+
+```sql
+-- View recent queries
+SELECT 
+    query,
+    query_duration_ms,
+    read_rows,
+    read_bytes,
+    memory_usage
+FROM system.query_log
+WHERE type = 'QueryFinish'
+ORDER BY event_time DESC
+LIMIT 10;
+```
+
+### Part Statistics
+
+Understand how data is stored:
+
+```sql
+SELECT 
+    partition,
+    name,
+    rows,
+    bytes_on_disk,
+    marks
+FROM system.parts
+WHERE table = 'events' AND active
+ORDER BY modification_time DESC;
+```
+
+### Index Usage
+
+Check if indexes are helping:
+
+```sql
+EXPLAIN indexes = 1
+SELECT count() FROM events WHERE event_type = 'click';
+```
+
+## Common Performance Issues
+
+### Too Many Parts
+
+**Symptoms:** Slow queries, insert errors
+
+**Solutions:**
+```sql
+SETTINGS
+    parts_to_delay_insert = 150,
+    parts_to_throw_insert = 3000;
+```
+
+Or manually optimize:
+```sql
+OPTIMIZE TABLE events FINAL;
+```
+
+### Large Merges Blocking
+
+**Symptoms:** Small merges waiting for resources
+
+**Solutions:**
+```sql
+SETTINGS
+    number_of_free_entries_in_pool_to_lower_max_size_of_merge = 8;
+```
+
+This lowers max merge size when pool is busy.
+
+### Wide Row Performance
+
+**Symptoms:** High memory usage, slow merges
+
+**Solutions:**
+```sql
+SETTINGS
+    merge_max_block_size = 4096,  -- Reduce from 8192
+    enable_vertical_merge_algorithm = 1;
+```
+
+<Tip>
+Vertical merge algorithm is automatically activated for tables with 11+ columns and 131,072+ rows per part.
+</Tip>
+
+## Best Practices
+
+1. **Design primary key carefully** - Put most selective columns first
+2. **Use appropriate indexes** - Bloom filters for equality, minmax for ranges
+3. **Monitor part count** - Keep it under 150 active parts per partition
+4. **Enable vertical merges** - For wide tables (many columns)
+5. **Use projections wisely** - For frequently aggregated queries
+6. **Test with EXPLAIN** - Verify index usage before deploying
+7. **Regular OPTIMIZE** - For heavily updated tables
+
+## Advanced Techniques
+
+### Materialized Views for Pre-aggregation
+
+```sql
+CREATE MATERIALIZED VIEW events_hourly
+ENGINE = SummingMergeTree()
+ORDER BY (toStartOfHour(timestamp), event_type)
+AS SELECT
+    toStartOfHour(timestamp) as hour,
+    event_type,
+    count() as event_count
+FROM events
+GROUP BY hour, event_type;
+```
+
+### Partition Pruning
+
+Use partition keys for efficient data filtering:
+
+```sql
+CREATE TABLE events (
+    date Date,
+    user_id UInt64,
+    event String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(date)
+ORDER BY (user_id, date);
+```
+
+Queries filtering by date will skip entire partitions.
+
+## Related Topics
+
+- [Optimization Strategies](/performance/optimization) for table-level settings
+- [Hardware Recommendations](/performance/hardware) for infrastructure planning
+- [Benchmarks](/performance/benchmarks) for testing methodologies

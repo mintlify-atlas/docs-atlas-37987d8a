@@ -1,0 +1,464 @@
+---
+title: SQL Operators
+description: Complete reference for comparison, arithmetic, logical, and special operators in ClickHouse SQL
+---
+
+## Overview
+
+ClickHouse supports standard SQL operators with extensions for array operations, type casting, and specialized analytical operations.
+
+## Comparison Operators
+
+Compare values and return boolean results:
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `=` | Equal | `status = 'active'` |
+| `!=`, `<>` | Not equal | `status != 'deleted'` |
+| `<` | Less than | `age < 18` |
+| `<=` | Less than or equal | `score <= 100` |
+| `>` | Greater than | `amount > 1000` |
+| `>=` | Greater than or equal | `quantity >= 10` |
+
+<CodeGroup>
+```sql Equality
+SELECT * FROM users WHERE status = 'active';
+SELECT * FROM users WHERE age != 0;
+```
+
+```sql Range
+SELECT * FROM products WHERE price > 100 AND price <= 500;
+```
+
+```sql Null Comparison
+SELECT * FROM users WHERE email IS NULL;
+SELECT * FROM users WHERE email IS NOT NULL;
+```
+</CodeGroup>
+
+## Arithmetic Operators
+
+Perform mathematical operations:
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `+` | Addition | `price + tax` |
+| `-` | Subtraction | `quantity - sold` |
+| `*` | Multiplication | `price * quantity` |
+| `/` | Division (float) | `total / count` |
+| `%` | Modulo | `id % 10` |
+| `div` | Integer division | `total div 100` |
+
+<CodeGroup>
+```sql Basic Arithmetic
+SELECT
+    price + shipping AS total_cost,
+    price * quantity AS subtotal,
+    total / items AS avg_item_cost
+FROM orders;
+```
+
+```sql Integer Division
+SELECT
+    amount div 100 AS hundreds,
+    amount % 100 AS remainder
+FROM transactions;
+```
+</CodeGroup>
+
+## Logical Operators
+
+Combine boolean expressions:
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `AND` | Logical AND | `status = 'active' AND age >= 18` |
+| `OR` | Logical OR | `country = 'US' OR country = 'CA'` |
+| `NOT` | Logical NOT | `NOT deleted` |
+| `XOR` | Logical XOR | `a XOR b` |
+
+<CodeGroup>
+```sql AND Operator
+SELECT * FROM users
+WHERE status = 'active'
+  AND created_at >= '2024-01-01'
+  AND country = 'US';
+```
+
+```sql OR Operator
+SELECT * FROM events
+WHERE event_type = 'click'
+   OR event_type = 'view'
+   OR event_type = 'purchase';
+```
+
+```sql NOT Operator
+SELECT * FROM users
+WHERE NOT (status = 'deleted' OR status = 'banned');
+```
+</CodeGroup>
+
+## String Operators
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `\|\|` | Concatenation | `first_name \|\| ' ' \|\| last_name` |
+| `LIKE` | Pattern matching | `email LIKE '%@gmail.com'` |
+| `ILIKE` | Case-insensitive LIKE | `name ILIKE '%john%'` |
+| `NOT LIKE` | Negated pattern | `name NOT LIKE 'test%'` |
+| `REGEXP` | Regular expression | `code REGEXP '^[A-Z]{3}[0-9]{3}$'` |
+
+<CodeGroup>
+```sql Concatenation
+SELECT
+    first_name || ' ' || last_name AS full_name,
+    'User: ' || username AS display_name
+FROM users;
+```
+
+```sql Pattern Matching
+SELECT * FROM users
+WHERE email LIKE '%@gmail.com';
+
+SELECT * FROM products
+WHERE name ILIKE '%phone%';
+```
+
+```sql Regular Expression
+SELECT * FROM codes
+WHERE code REGEXP '^[A-Z]{2}[0-9]{4}$';
+```
+</CodeGroup>
+
+## IN Operator
+
+Check if value exists in a set:
+
+<CodeGroup>
+```sql IN with List
+SELECT * FROM users
+WHERE country IN ('US', 'UK', 'CA', 'AU');
+```
+
+```sql IN with Subquery
+SELECT * FROM users
+WHERE user_id IN (
+    SELECT user_id FROM premium_subscribers
+);
+```
+
+```sql NOT IN
+SELECT * FROM products
+WHERE category NOT IN ('discontinued', 'out-of-stock');
+```
+
+```sql Global IN
+SELECT * FROM events
+GLOBAL IN (
+    SELECT user_id FROM active_users
+);
+```
+</CodeGroup>
+
+<Note>
+From test file 00042_set.sql:1 - demonstrates IN with subquery
+</Note>
+
+## BETWEEN Operator
+
+Check if value is within range:
+
+<CodeGroup>
+```sql Numeric Range
+SELECT * FROM products
+WHERE price BETWEEN 100 AND 500;
+```
+
+```sql Date Range
+SELECT * FROM events
+WHERE event_date BETWEEN '2024-01-01' AND '2024-01-31';
+```
+
+```sql NOT BETWEEN
+SELECT * FROM scores
+WHERE value NOT BETWEEN 0 AND 100;
+```
+</CodeGroup>
+
+## NULL Operators
+
+Handle NULL values:
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `IS NULL` | Check if NULL | `email IS NULL` |
+| `IS NOT NULL` | Check if not NULL | `phone IS NOT NULL` |
+| `COALESCE` | First non-NULL value | `COALESCE(phone, email, 'N/A')` |
+| `IFNULL` | Replace NULL | `IFNULL(discount, 0)` |
+| `NULLIF` | Return NULL if equal | `NULLIF(value, 0)` |
+
+<CodeGroup>
+```sql NULL Checks
+SELECT * FROM users
+WHERE phone IS NULL;
+
+SELECT * FROM orders
+WHERE shipped_at IS NOT NULL;
+```
+
+```sql NULL Handling
+SELECT
+    COALESCE(phone, email, 'No contact') AS contact,
+    IFNULL(discount, 0) AS final_discount,
+    NULLIF(quantity, 0) AS safe_quantity
+FROM users;
+```
+</CodeGroup>
+
+## Array Operators
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `[]` | Array element access | `tags[1]` |
+| `IN` | Element in array | `'tag' IN tags` |
+| `NOT IN` | Element not in array | `'tag' NOT IN tags` |
+| `has` | Array contains element | `has(tags, 'important')` |
+| `hasAny` | Array contains any | `hasAny(tags, ['a', 'b'])` |
+| `hasAll` | Array contains all | `hasAll(tags, ['a', 'b'])` |
+
+<CodeGroup>
+```sql Array Access
+SELECT
+    tags[1] AS first_tag,
+    tags[length(tags)] AS last_tag
+FROM posts;
+```
+
+```sql Array Membership
+SELECT * FROM posts
+WHERE has(tags, 'featured');
+
+SELECT * FROM users
+WHERE hasAny(interests, ['sports', 'music']);
+```
+
+```sql Array Comparison
+SELECT * FROM documents
+WHERE hasAll(required_tags, tags);
+```
+</CodeGroup>
+
+## Tuple Operators
+
+<CodeGroup>
+```sql Tuple Access
+SELECT
+    user_info.1 AS user_id,
+    user_info.2 AS username
+FROM sessions;
+```
+
+```sql Tuple Comparison
+SELECT * FROM events
+WHERE (event_type, status) = ('click', 'processed');
+```
+</CodeGroup>
+
+## Bitwise Operators
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `&` | Bitwise AND | `flags & 1` |
+| `\|` | Bitwise OR | `flags \| 2` |
+| `^` | Bitwise XOR | `a ^ b` |
+| `~` | Bitwise NOT | `~flags` |
+| `<<` | Left shift | `value << 2` |
+| `>>` | Right shift | `value >> 2` |
+
+<CodeGroup>
+```sql Bitwise Operations
+SELECT
+    flags & 1 AS is_active,
+    flags & 2 AS is_premium,
+    flags | 4 AS add_flag
+FROM users;
+```
+
+```sql Bit Shifting
+SELECT
+    value << 1 AS doubled,
+    value >> 1 AS halved
+FROM numbers;
+```
+</CodeGroup>
+
+## Type Cast Operators
+
+| Operator | Description | Example |
+|----------|-------------|----------|
+| `::` | Type cast | `value::UInt64` |
+| `CAST` | Explicit cast | `CAST(value AS String)` |
+
+<CodeGroup>
+```sql Cast Operator
+SELECT
+    user_id::String AS user_id_str,
+    '123'::UInt64 AS numeric_id,
+    timestamp::Date AS date_only
+FROM users;
+```
+
+```sql CAST Function
+SELECT
+    CAST(price AS Decimal(10, 2)) AS formatted_price,
+    CAST(created_at AS Date) AS created_date
+FROM orders;
+```
+</CodeGroup>
+
+## Conditional Operators
+
+### CASE Expression
+
+<CodeGroup>
+```sql Simple CASE
+SELECT
+    CASE status
+        WHEN 'A' THEN 'Active'
+        WHEN 'I' THEN 'Inactive'
+        ELSE 'Unknown'
+    END AS status_name
+FROM users;
+```
+
+```sql Searched CASE
+SELECT
+    CASE
+        WHEN score >= 90 THEN 'A'
+        WHEN score >= 80 THEN 'B'
+        WHEN score >= 70 THEN 'C'
+        ELSE 'F'
+    END AS grade
+FROM students;
+```
+</CodeGroup>
+
+### IF Function
+
+<CodeGroup>
+```sql Simple IF
+SELECT
+    IF(age >= 18, 'Adult', 'Minor') AS age_group,
+    IF(premium, price * 0.9, price) AS final_price
+FROM users;
+```
+
+```sql Nested IF
+SELECT
+    IF(status = 'A',
+       'Active',
+       IF(status = 'P', 'Pending', 'Other')
+    ) AS status_label
+FROM accounts;
+```
+</CodeGroup>
+
+## Lambda Operators
+
+For higher-order array functions:
+
+<CodeGroup>
+```sql Array Filter
+SELECT arrayFilter(x -> x > 10, [5, 15, 25, 8]) AS filtered;
+```
+
+```sql Array Map
+SELECT arrayMap(x -> x * 2, [1, 2, 3, 4]) AS doubled;
+```
+
+```sql Array Exists
+SELECT arrayExists(x -> x % 2 = 0, [1, 3, 5, 7]) AS has_even;
+```
+</CodeGroup>
+
+## Special Operators
+
+### ANY and ALL
+
+<CodeGroup>
+```sql ANY
+SELECT * FROM products
+WHERE price > ANY (SELECT price FROM discounted_products);
+```
+
+```sql ALL
+SELECT * FROM products
+WHERE price > ALL (SELECT price FROM budget_products);
+```
+</CodeGroup>
+
+### EXISTS
+
+```sql
+SELECT * FROM users
+WHERE EXISTS (
+    SELECT 1 FROM orders
+    WHERE orders.user_id = users.user_id
+);
+```
+
+### DISTINCT
+
+```sql
+SELECT DISTINCT country FROM users;
+SELECT count(DISTINCT user_id) FROM events;
+```
+
+## Operator Precedence
+
+From highest to lowest:
+
+1. `[]`, `.` (array/tuple access)
+2. `::`  (type cast)
+3. Unary `-`, `~`, `NOT`
+4. `*`, `/`, `%`, `div`
+5. `+`, `-`
+6. `<<`, `>>`
+7. `&`
+8. `^`
+9. `|`
+10. Comparison operators (`=`, `<`, `>`, `<=`, `>=`, `!=`, `LIKE`, `IN`, `BETWEEN`)
+11. `IS NULL`, `IS NOT NULL`
+12. `AND`
+13. `OR`
+14. `XOR`
+
+<CodeGroup>
+```sql Precedence Example
+SELECT * FROM items
+WHERE price * quantity > 1000
+  AND (status = 'active' OR featured = 1);
+```
+
+```sql Use Parentheses
+SELECT (price + tax) * quantity AS total
+FROM orders;
+```
+</CodeGroup>
+
+## Best Practices
+
+<Tip>
+- Use parentheses for complex expressions to improve readability
+- Prefer `IS NULL` over `= NULL` (the latter always returns NULL)
+- Use `IN` instead of multiple `OR` conditions when possible
+- Consider `has` functions for array operations (better performance)
+- Use appropriate comparison operators for date/time types
+</Tip>
+
+## Reference
+
+See also:
+- [SELECT Queries](/sql/select)
+- [Data Types](/sql/data-types)
+- [Functions Reference](/functions/overview)

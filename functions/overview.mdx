@@ -1,0 +1,337 @@
+---
+title: Functions Overview
+description: Complete reference for ClickHouse functions including regular, aggregate, table, and window functions
+---
+
+ClickHouse provides hundreds of built-in functions for data processing, analysis, and transformation. Functions are organized into several categories based on their purpose and behavior.
+
+## Function Types
+
+ClickHouse functions fall into four main categories:
+
+### Regular Functions
+
+Regular functions operate on individual rows and return a result for each input row. They are used in `SELECT` clauses, `WHERE` conditions, and other expressions.
+
+**Examples:**
+- `lower('HELLO')` - converts string to lowercase
+- `toString(123)` - converts number to string
+- `now()` - returns current timestamp
+- `plus(2, 3)` - adds two numbers
+
+### Aggregate Functions
+
+Aggregate functions process multiple rows and return a single result. They are used with `GROUP BY` clauses to compute summary statistics.
+
+**Examples:**
+- `sum(column)` - calculates total sum
+- `avg(column)` - calculates average value
+- `count()` - counts rows
+- `groupArray(column)` - collects values into array
+
+### Table Functions
+
+Table functions generate entire tables and can be used in `FROM` clauses. They produce a set of rows that can be queried like regular tables.
+
+**Examples:**
+- `numbers(10)` - generates sequence 0-9
+- `file('data.csv', CSV)` - reads data from file
+- `url('https://example.com/data', CSV)` - fetches data from URL
+- `remote('server', database, table)` - queries remote table
+
+### Window Functions
+
+Window functions perform calculations across a set of rows related to the current row, without collapsing the result set like aggregate functions.
+
+**Examples:**
+- `row_number() OVER (ORDER BY column)` - assigns row numbers
+- `rank() OVER (PARTITION BY category ORDER BY value)` - ranks within partitions
+- `lag(column, 1) OVER (ORDER BY date)` - accesses previous row value
+
+## Function Categories
+
+<CardGroup cols={3}>
+  <Card title="Arithmetic" icon="calculator" href="/functions/arithmetic">
+    Mathematical operations: `plus`, `minus`, `multiply`, `divide`, `modulo`, `abs`, `negate`
+  </Card>
+  
+  <Card title="Comparison" icon="not-equal" href="/functions/comparison">
+    Compare values: `equals`, `notEquals`, `less`, `greater`, `lessOrEquals`, `greaterOrEquals`
+  </Card>
+  
+  <Card title="Logical" icon="diagram-venn" href="/functions/logical">
+    Boolean operations: `and`, `or`, `not`, `xor`, `if`, `multiIf`
+  </Card>
+  
+  <Card title="String" icon="text" href="/functions/string">
+    String manipulation: `concat`, `substring`, `lower`, `upper`, `replace`, `trim`, `split`
+  </Card>
+  
+  <Card title="Array" icon="list" href="/functions/array">
+    Array operations: `arrayConcat`, `arrayElement`, `arrayMap`, `arrayFilter`, `arrayReduce`
+  </Card>
+  
+  <Card title="Date & Time" icon="clock" href="/functions/date-time">
+    Temporal functions: `now`, `today`, `toDate`, `formatDateTime`, `addDays`, `dateDiff`
+  </Card>
+  
+  <Card title="Type Conversion" icon="right-left" href="/functions/type-conversion">
+    Type casting: `toString`, `toInt64`, `toFloat64`, `toDate`, `toDateTime`, `CAST`
+  </Card>
+  
+  <Card title="JSON" icon="brackets-curly" href="/functions/json">
+    JSON processing: `JSONExtract`, `JSONExtractString`, `JSONHas`, `JSONLength`, `JSONPath`
+  </Card>
+  
+  <Card title="Hash" icon="hashtag" href="/functions/hash">
+    Hashing functions: `cityHash64`, `sipHash64`, `MD5`, `SHA256`, `xxHash64`, `murmurHash`
+  </Card>
+  
+  <Card title="Geo" icon="earth-americas" href="/functions/geo">
+    Geographic functions: `greatCircleDistance`, `geoToH3`, `h3ToGeo`, `geohashEncode`
+  </Card>
+  
+  <Card title="URL" icon="link" href="/functions/url">
+    URL manipulation: `protocol`, `domain`, `path`, `queryString`, `decodeURLComponent`
+  </Card>
+  
+  <Card title="Encoding" icon="binary" href="/functions/encoding">
+    Encoding/decoding: `base64Encode`, `base64Decode`, `hex`, `unhex`, `encodeXML`
+  </Card>
+  
+  <Card title="Bitmap" icon="grid" href="/functions/bitmap">
+    Bitmap operations: `bitmapBuild`, `bitmapContains`, `bitmapAnd`, `bitmapOr`, `bitmapXor`
+  </Card>
+  
+  <Card title="IP Address" icon="network-wired" href="/functions/ip">
+    IP processing: `IPv4NumToString`, `IPv6NumToString`, `toIPv4`, `toIPv6`, `isIPv4`
+  </Card>
+  
+  <Card title="Random" icon="dice" href="/functions/random">
+    Random generation: `rand`, `rand64`, `randConstant`, `generateUUIDv4`, `randomString`
+  </Card>
+</CardGroup>
+
+## Aggregate Function Categories
+
+<CardGroup cols={3}>
+  <Card title="Standard" icon="chart-simple" href="/functions/aggregate/standard">
+    Basic aggregates: `sum`, `avg`, `min`, `max`, `count`, `stddev`, `variance`
+  </Card>
+  
+  <Card title="Combinators" icon="code-merge" href="/functions/aggregate/combinators">
+    Function modifiers: `-If`, `-Array`, `-State`, `-Merge`, `-OrNull`, `-OrDefault`
+  </Card>
+  
+  <Card title="Parametric" icon="sliders" href="/functions/aggregate/parametric">
+    Advanced aggregates: `quantile`, `topK`, `uniq`, `groupArray`, `histogram`, `sequenceMatch`
+  </Card>
+</CardGroup>
+
+## Function Properties
+
+### Deterministic Functions
+
+Most functions in ClickHouse are deterministic - they always return the same result for the same input. This enables query optimization and result caching.
+
+**Deterministic examples:**
+- `plus(2, 3)` - always returns 5
+- `lower('ABC')` - always returns 'abc'
+- `MD5('hello')` - always returns same hash
+
+**Non-deterministic examples:**
+- `now()` - returns current timestamp
+- `rand()` - generates random number
+- `dictGet()` - may change if dictionary updates
+
+### Injective Functions
+
+Injective functions guarantee unique outputs for unique inputs. This property is used for query optimization, particularly in `GROUP BY` operations.
+
+**Injective examples:**
+- `negate(x)` - each input has unique negative
+- `bitNot(x)` - each input has unique bitwise complement
+- `reverse(s)` - each string has unique reverse
+
+### Null Handling
+
+ClickHouse functions handle `NULL` values according to SQL semantics:
+
+- Most functions return `NULL` if any argument is `NULL`
+- Special null-safe variants exist: `isNull`, `isNotNull`, `ifNull`, `coalesce`
+- Comparison operators have null-safe versions: `isNotDistinctFrom`
+
+```sql
+SELECT
+    lower(NULL) AS result1,           -- NULL
+    isNull(NULL) AS result2,          -- 1 (true)
+    ifNull(NULL, 'default') AS result3 -- 'default'
+```
+
+## Common Usage Patterns
+
+### Type Conversion Chain
+
+```sql
+SELECT
+    toString(toInt32(toFloat64('123.45'))) AS result
+-- Result: '123'
+```
+
+### Conditional Logic
+
+```sql
+SELECT
+    multiIf(
+        x < 0, 'negative',
+        x = 0, 'zero',
+        x > 0, 'positive',
+        'unknown'
+    ) AS category
+FROM numbers(5)
+```
+
+### String Manipulation
+
+```sql
+SELECT
+    concat(
+        upper(substring(name, 1, 1)),
+        lower(substring(name, 2))
+    ) AS capitalized
+FROM users
+```
+
+### Array Processing
+
+```sql
+SELECT
+    arrayMap(x -> x * 2, [1, 2, 3, 4]) AS doubled,
+    arrayFilter(x -> x > 2, [1, 2, 3, 4]) AS filtered,
+    arrayReduce('sum', [1, 2, 3, 4]) AS total
+```
+
+### Date Calculations
+
+```sql
+SELECT
+    now() AS current_time,
+    today() AS current_date,
+    addDays(today(), 7) AS next_week,
+    dateDiff('day', created_at, now()) AS days_ago
+FROM events
+```
+
+## Performance Considerations
+
+### Function Execution
+
+- **Constant folding**: Expressions with constant arguments are evaluated once at query planning
+- **Vectorized execution**: Functions process data in batches for better CPU utilization
+- **Short-circuit evaluation**: Logical operators evaluate lazily when possible
+- **Specialization**: Many functions have optimized implementations for specific data types
+
+### Optimization Tips
+
+<AccordionGroup>
+  <Accordion title="Use native types over strings">
+    Store and process data in native types (`Int64`, `Float64`, `Date`) rather than strings. Convert only when necessary for output.
+    
+    ```sql
+    -- Slow: stores dates as strings
+    SELECT * FROM events WHERE toDate(date_string) = '2024-01-01'
+    
+    -- Fast: uses native Date type
+    SELECT * FROM events WHERE date_column = '2024-01-01'
+    ```
+  </Accordion>
+  
+  <Accordion title="Minimize type conversions">
+    Avoid unnecessary type conversions in hot paths. Ensure columns are stored in appropriate types.
+    
+    ```sql
+    -- Slow: converts on every comparison
+    SELECT * FROM table WHERE toString(id) = '123'
+    
+    -- Fast: compares native types
+    SELECT * FROM table WHERE id = 123
+    ```
+  </Accordion>
+  
+  <Accordion title="Leverage function pushdown">
+    Use functions that can be pushed down to storage layer: comparisons, basic arithmetic, date functions.
+    
+    ```sql
+    -- Can skip reading data blocks
+    SELECT * FROM table WHERE date >= '2024-01-01'
+    
+    -- Requires reading all data
+    SELECT * FROM table WHERE substring(id, 1, 3) = 'abc'
+    ```
+  </Accordion>
+  
+  <Accordion title="Prefer aggregate combinators">
+    Use aggregate function combinators for conditional aggregation instead of filtering data.
+    
+    ```sql
+    -- Processes data twice
+    SELECT sum(value) FROM table WHERE category = 'A'
+    UNION ALL
+    SELECT sum(value) FROM table WHERE category = 'B'
+    
+    -- Single pass with combinator
+    SELECT
+        sumIf(value, category = 'A'),
+        sumIf(value, category = 'B')
+    FROM table
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## User-Defined Functions
+
+ClickHouse supports user-defined functions (UDFs) in SQL:
+
+```sql
+-- Create a simple UDF
+CREATE FUNCTION pct AS (part, total) -> (part / total) * 100;
+
+-- Use the UDF
+SELECT pct(sales, quota) AS sales_percentage FROM metrics;
+```
+
+UDFs can reference other functions and perform complex calculations while maintaining readability.
+
+## Function Naming Conventions
+
+ClickHouse follows these naming patterns:
+
+- **camelCase**: Standard function names (`toString`, `arrayConcat`, `greatCircleDistance`)
+- **Suffix patterns**:
+  - `OrZero` - returns zero instead of error (`toInt64OrZero`)
+  - `OrNull` - returns NULL instead of error (`toInt64OrNull`)
+  - `OrDefault` - returns default value (`toInt64OrDefault`)
+- **Prefix patterns**:
+  - `try` - returns NULL on error instead of throwing (`tryBase64Decode`)
+  - `assume` - optimization hint (`assumeNotNull`)
+- **Aliases**: Many functions have SQL-standard aliases (`lcase`/`lower`, `ucase`/`upper`)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Explore Regular Functions" icon="function" href="/functions/arithmetic">
+    Learn about arithmetic, string, array, and other regular functions
+  </Card>
+  
+  <Card title="Master Aggregate Functions" icon="chart-line" href="/functions/aggregate/overview">
+    Discover aggregate functions for data analysis and reporting
+  </Card>
+  
+  <Card title="Use Table Functions" icon="table" href="/functions/table/overview">
+    Generate and query data using table functions
+  </Card>
+  
+  <Card title="SQL Reference" icon="book" href="/sql/syntax">
+    Understand how functions fit into ClickHouse SQL syntax
+  </Card>
+</CardGroup>

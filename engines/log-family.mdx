@@ -1,0 +1,344 @@
+---
+title: Log Family Engines
+description: Lightweight table engines for small tables and temporary data
+---
+
+The Log family engines (`src/Storages/StorageLog.h`, `src/Storages/StorageStripeLog.h`) are simple, lightweight table engines designed for small volumes of data (less than 1 million rows). They have minimal overhead and are ideal for temporary tables, small reference data, and development environments.
+
+## Comparison
+
+| Feature | Log | TinyLog | StripeLog |
+|---------|-----|---------|------------|
+| **Marks file** | Yes | No | No |
+| **Concurrent reads** | Yes | No | Yes |
+| **Storage files** | One per column | One per column | Single file |
+| **Best for** | Small tables | Tiny datasets | Write-once data |
+| **Source** | StorageLog.h:26 | StorageLog.h:23 | StorageStripeLog.h:23 |
+
+## Log Engine
+
+The standard Log engine with support for concurrent reads (`src/Storages/StorageLog.h:20-26`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2,
+    column3 Type3
+) ENGINE = Log();
+```
+
+### File Structure
+
+From `src/Storages/StorageLog.h:94-156`:
+
+- **Column files**: `{column}.bin` - Compressed column data
+- **Marks file**: `__marks.mrk` - Index marks for parallel reading
+- **Sizes file**: File size tracking for integrity checks
+
+### Key Features
+
+<Accordion title="Implementation Details">
+  From `src/Storages/StorageLog.h:48`:
+  
+  - Engine name: `"Log"` (line 48)
+  - Stores data on disk: `storesDataOnDisk() = true` (line 79)
+  - Supports subcolumns: `supportsSubcolumns() = true` (line 81)
+  - Uses marks file: `use_marks_file = true` (line 152)
+  - Concurrent reads via marks: `num_streams` parameter (line 55)
+</Accordion>
+
+### Use Cases
+
+- Reference tables (countries, categories, mappings)
+- Development and testing
+- Small dimension tables
+- Log files that don't need frequent updates
+
+### Example
+
+```sql
+CREATE TABLE countries (
+    code FixedString(2),
+    name String,
+    population UInt64
+) ENGINE = Log();
+
+INSERT INTO countries VALUES 
+    ('US', 'United States', 331000000),
+    ('CN', 'China', 1440000000),
+    ('IN', 'India', 1380000000);
+
+SELECT * FROM countries WHERE code = 'US';
+```
+
+### Performance Characteristics
+
+- **Write**: Append-only, no updates or deletes
+- **Read**: Sequential scan with parallel streams via marks
+- **Storage**: Compressed, one file per column
+- **Concurrency**: Multiple readers, single writer
+
+## TinyLog Engine
+
+Minimal engine without marks file (`src/Storages/StorageLog.h:23-24`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2
+) ENGINE = TinyLog();
+```
+
+### Differences from Log
+
+From `src/Storages/StorageLog.h:151-152`:
+
+- No marks file (`use_marks_file = false`)
+- Single-threaded reads only
+- Lower overhead
+- Faster for very small datasets
+
+### File Structure
+
+- **Column files**: `{column}.bin` - Compressed column data only
+- **Sizes file**: File size tracking
+
+### Use Cases
+
+- Very small lookup tables (< 10,000 rows)
+- Temporary calculation results
+- Testing and prototyping
+- Single-user environments
+
+### Example
+
+```sql
+CREATE TABLE temp_calculations (
+    id UInt64,
+    result Float64
+) ENGINE = TinyLog();
+
+INSERT INTO temp_calculations 
+SELECT number, sqrt(number) 
+FROM numbers(1000);
+
+SELECT avg(result) FROM temp_calculations;
+```
+
+### Limitations
+
+- No concurrent reads (sequential only)
+- No indexes
+- No partitioning
+- Not suitable for production workloads
+
+## StripeLog Engine
+
+All columns in a single file with index (`src/Storages/StorageStripeLog.h:20-23`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2,
+    column3 Type3
+) ENGINE = StripeLog();
+```
+
+### File Structure
+
+From `src/Storages/StorageStripeLog.h:111-116`:
+
+- **Data file**: `data.bin` - All columns in single Native format file
+- **Index file**: `index.mrk` - Index for native format (line 112)
+- **Sizes file**: File size tracking
+
+### Key Features
+
+<Accordion title="Implementation Details">
+  From `src/Storages/StorageStripeLog.h:20-127`:
+  
+  - Engine name: `"StripeLog"` (line 41)
+  - Single data file: Reduces file count (line 111)
+  - Native format: Uses `IndexForNativeFormat` (line 115)
+  - Stores data on disk: `storesDataOnDisk() = true` (line 59)
+  - Total rows tracking: `total_rows` atomic counter (line 119)
+</Accordion>
+
+### Use Cases
+
+- Write-once, read-many scenarios
+- Data with many columns
+- Reducing file count overhead
+- Systems with file handle limitations
+
+### Example
+
+```sql
+CREATE TABLE wide_table (
+    id UInt64,
+    col1 String,
+    col2 String,
+    col3 Float64,
+    col4 Float64,
+    col5 Date,
+    col6 DateTime,
+    col7 String,
+    col8 UInt32,
+    col9 UInt32,
+    col10 String
+) ENGINE = StripeLog();
+
+-- Single file for all columns
+INSERT INTO wide_table VALUES (...);
+```
+
+### Advantages
+
+- Fewer files on disk (single data file)
+- Better for tables with many columns
+- Simpler file management
+
+### Trade-offs
+
+- Cannot read individual columns efficiently
+- Reads entire row even if querying single column
+- Less efficient for analytical queries on few columns
+
+## Common Features
+
+All Log family engines share these characteristics:
+
+### Data Storage
+
+```sql
+-- All engines store data on disk
+SELECT 
+    database,
+    table,
+    formatReadableSize(bytes_on_disk) AS size
+FROM system.tables
+WHERE engine LIKE '%Log%';
+```
+
+### File Compression
+
+From `src/Storages/StorageLog.h:176` and `src/Storages/StorageStripeLog.h:122`:
+
+- Uses `max_compress_block_size` setting
+- Supports standard compression codecs
+- Compressed by default
+
+### Atomic Operations
+
+From `src/Storages/StorageLog.h:158-160` and `src/Storages/StorageStripeLog.h:119-120`:
+
+- Atomic row and byte counters
+- `totalRows()` and `totalBytes()` methods
+- Thread-safe operations
+
+### Backup Support
+
+From `src/Storages/StorageLog.h:87-88` and `src/Storages/StorageStripeLog.h:67-68`:
+
+```sql
+BACKUP TABLE log_table TO Disk('backups', 'log_backup.zip');
+RESTORE TABLE log_table FROM Disk('backups', 'log_backup.zip');
+```
+
+## Performance Comparison
+
+### Write Performance
+
+```sql
+-- Benchmark inserts
+CREATE TABLE log_bench ENGINE = Log AS SELECT * FROM numbers(1000000);
+CREATE TABLE tiny_bench ENGINE = TinyLog AS SELECT * FROM numbers(1000000);
+CREATE TABLE stripe_bench ENGINE = StripeLog AS SELECT * FROM numbers(1000000);
+```
+
+| Engine | Write Speed | File Count | Overhead |
+|--------|-------------|------------|-----------|
+| Log | Good | High (per column) | Medium |
+| TinyLog | Best | High (per column) | Low |
+| StripeLog | Good | Low (single file) | Medium |
+
+### Read Performance
+
+| Engine | Sequential | Parallel | Column Subset |
+|--------|-----------|----------|---------------|
+| Log | Good | Good | Excellent |
+| TinyLog | Good | No | Excellent |
+| StripeLog | Good | Fair | Fair |
+
+### Storage Efficiency
+
+```sql
+-- Check storage usage
+SELECT 
+    engine,
+    count() AS tables,
+    formatReadableSize(sum(bytes_on_disk)) AS total_size
+FROM system.tables
+WHERE engine IN ('Log', 'TinyLog', 'StripeLog')
+GROUP BY engine;
+```
+
+## Limitations
+
+All Log engines have these limitations:
+
+<Warning>
+  - **No concurrent writes**: Only one writer at a time
+  - **No updates**: Cannot UPDATE or DELETE rows
+  - **No indexes**: Only sequential scans
+  - **No replication**: Single-node only
+  - **Not for production**: Use MergeTree for production workloads
+</Warning>
+
+### Truncate Support
+
+From `src/Storages/StorageLog.h:75` and `src/Storages/StorageStripeLog.h:62`:
+
+```sql
+-- Delete all data
+TRUNCATE TABLE table_name;
+```
+
+### Data Validation
+
+From `src/Storages/StorageLog.h:72-73`:
+
+```sql
+-- Check table integrity
+CHECK TABLE table_name;
+```
+
+## Migration to MergeTree
+
+When data grows beyond 1M rows, migrate to MergeTree:
+
+```sql
+-- Create MergeTree table
+CREATE TABLE data_mt ENGINE = MergeTree()
+ORDER BY id
+AS SELECT * FROM data_log;
+
+-- Verify migration
+SELECT count() FROM data_mt;
+
+-- Drop old table
+DROP TABLE data_log;
+```
+
+## Source Code References
+
+- `src/Storages/StorageLog.h:20-179` - Log and TinyLog implementation
+- `src/Storages/StorageStripeLog.h:20-128` - StripeLog implementation
+- `src/Storages/StorageLogSettings.h` - Log family settings
+- `src/Common/FileChecker.h` - File integrity checking

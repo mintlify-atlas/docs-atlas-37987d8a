@@ -1,0 +1,354 @@
+---
+title: Type Conversion Functions
+description: Functions for converting between different data types in ClickHouse
+---
+
+ClickHouse provides comprehensive type conversion functions to transform data between different types. These functions are essential for data manipulation and ensuring type compatibility.
+
+## Integer Conversion Functions
+
+Convert values to integer types of various sizes.
+
+| Function | Description | Example |
+|----------|-------------|----------|
+| `toInt8` | Convert to Int8 (-128 to 127) | `SELECT toInt8('42')` |
+| `toInt16` | Convert to Int16 | `SELECT toInt16('1000')` |
+| `toInt32` | Convert to Int32 | `SELECT toInt32('100000')` |
+| `toInt64` | Convert to Int64 | `SELECT toInt64('9223372036854775807')` |
+| `toInt128` | Convert to Int128 | `SELECT toInt128('123456789')` |
+| `toInt256` | Convert to Int256 | `SELECT toInt256('123456789')` |
+| `toUInt8` | Convert to UInt8 (0 to 255) | `SELECT toUInt8('255')` |
+| `toUInt16` | Convert to UInt16 | `SELECT toUInt16('65535')` |
+| `toUInt32` | Convert to UInt32 | `SELECT toUInt32('4294967295')` |
+| `toUInt64` | Convert to UInt64 | `SELECT toUInt64('18446744073709551615')` |
+| `toUInt128` | Convert to UInt128 | `SELECT toUInt128('123456789')` |
+| `toUInt256` | Convert to UInt256 | `SELECT toUInt256('123456789')` |
+
+### Examples
+
+```sql
+-- String to integer
+SELECT toInt32('12345');
+-- Result: 12345
+
+-- Float to integer (truncates)
+SELECT toInt32(42.7);
+-- Result: 42
+
+-- Multiple type sizes
+SELECT toInt8('42'), toInt16('1000'), toInt64('9999999999');
+```
+
+## Floating Point Conversion
+
+| Function | Description | Example |
+|----------|-------------|----------|
+| `toFloat32` | Convert to Float32 | `SELECT toFloat32('3.14')` |
+| `toFloat64` | Convert to Float64 | `SELECT toFloat64('3.14159265359')` |
+
+```sql
+SELECT toFloat64('3.14159');
+-- Result: 3.14159
+
+SELECT toFloat32(42);
+-- Result: 42.0
+```
+
+## String Conversion
+
+### toString
+
+Converts any value to a string representation.
+
+```sql
+SELECT toString(42);
+-- Result: '42'
+
+SELECT toString(3.14);
+-- Result: '3.14'
+
+SELECT toString(today());
+-- Result: '2026-03-03'
+
+SELECT toString([1, 2, 3]);
+-- Result: '[1,2,3]'
+```
+
+### toFixedString
+
+Converts to a fixed-length string, padding with null bytes if needed.
+
+```sql
+SELECT toFixedString('hello', 10);
+-- Result: 'hello\0\0\0\0\0' (10 bytes total)
+
+SELECT length(toFixedString('hi', 5));
+-- Result: 5
+```
+
+## Date and Time Conversion
+
+### toDate
+
+Converts to Date type.
+
+```sql
+SELECT toDate('2023-12-25');
+-- Result: 2023-12-25
+
+SELECT toDate(now());
+-- Converts DateTime to Date
+
+SELECT toDate(19723);
+-- Converts days since 1970-01-01
+-- Result: 2024-01-01
+```
+
+### toDate32
+
+Converts to Date32 type (supports wider date range).
+
+```sql
+SELECT toDate32('2123-11-14');
+-- Result: 2123-11-14
+```
+
+### toDateTime
+
+Converts to DateTime type.
+
+```sql
+SELECT toDateTime('2023-12-25 10:30:00');
+-- Result: 2023-12-25 10:30:00
+
+SELECT toDateTime(1703502600);
+-- Converts Unix timestamp
+
+-- With timezone
+SELECT toDateTime('2023-12-25 10:30:00', 'Europe/Amsterdam');
+```
+
+### toDateTime64
+
+Converts to DateTime64 with subsecond precision.
+
+```sql
+SELECT toDateTime64('2023-11-14 05:50:12.123', 3);
+-- Result: 2023-11-14 05:50:12.123 (precision 3 = milliseconds)
+
+SELECT toDateTime64('2023-11-14 05:50:12.123456', 6, 'Europe/Amsterdam');
+-- Result with microsecond precision
+```
+
+## Decimal Conversion
+
+```sql
+-- Convert to Decimal with specified precision and scale
+SELECT toDecimal32(42.12345, 2);
+-- Result: 42.12 (precision 2)
+
+SELECT toDecimal64(123.456789, 4);
+-- Result: 123.4567
+
+SELECT toDecimal128(1234567.89, 3);
+-- Result: 1234567.890
+```
+
+## Boolean Conversion
+
+### toBool
+
+Converts to boolean (UInt8 with values 0 or 1).
+
+```sql
+SELECT toBool(1);
+-- Result: 1
+
+SELECT toBool(0);
+-- Result: 0
+
+SELECT toBool('true');
+-- Result: 1
+
+SELECT toBool('false');
+-- Result: 0
+```
+
+## UUID Conversion
+
+```sql
+SELECT toUUID('fae310ca-d52a-4923-9e9b-02bf67f4b009');
+
+SELECT toString(toUUID('fae310ca-d52a-4923-9e9b-02bf67f4b009'));
+-- Result: 'fae310ca-d52a-4923-9e9b-02bf67f4b009'
+```
+
+## IPv4 and IPv6 Conversion
+
+```sql
+-- String to IPv4
+SELECT toIPv4('122.233.64.201');
+
+-- IPv4 to String
+SELECT toIPv4('122.233.64.201') as ip, toString(ip);
+
+-- IPv6
+SELECT toIPv6('2001:0001:130F:0002:0003:09C0:876A:130B');
+```
+
+## CAST Function
+
+General-purpose type conversion using SQL standard syntax.
+
+```sql
+-- Integer to string
+SELECT CAST(42 AS String);
+-- Result: '42'
+
+-- String to integer
+SELECT CAST('123' AS Int32);
+-- Result: 123
+
+-- Float to Decimal
+SELECT CAST(3.14159 AS Decimal(5,2));
+-- Result: 3.14
+
+-- Array conversion
+SELECT CAST([1, 2, 3] AS Array(String));
+-- Result: ['1','2','3']
+```
+
+## Safe Conversion Functions
+
+These functions return default values instead of throwing exceptions on conversion errors.
+
+### toInt32OrZero
+
+Returns 0 if conversion fails.
+
+```sql
+SELECT toInt32OrZero('42');
+-- Result: 42
+
+SELECT toInt32OrZero('invalid');
+-- Result: 0
+```
+
+### toInt32OrNull
+
+Returns NULL if conversion fails.
+
+```sql
+SELECT toInt32OrNull('42');
+-- Result: 42
+
+SELECT toInt32OrNull('invalid');
+-- Result: NULL
+```
+
+### toInt32OrDefault
+
+Returns a specified default value if conversion fails.
+
+```sql
+SELECT toInt32OrDefault('invalid', -1);
+-- Result: -1
+```
+
+These safe variants are available for most conversion functions:
+- `toFloat64OrZero`, `toFloat64OrNull`, `toFloat64OrDefault`
+- `toDateOrZero`, `toDateOrNull`, `toDateOrDefault`
+- `toDateTimeOrZero`, `toDateTimeOrNull`, `toDateTimeOrDefault`
+
+## Nullable Type Conversion
+
+### toNullable
+
+Converts a type to its Nullable equivalent.
+
+```sql
+SELECT toTypeName(toNullable(42));
+-- Result: 'Nullable(Int32)'
+```
+
+### assumeNotNull
+
+Removes Nullable wrapper, assuming the value is not NULL.
+
+```sql
+SELECT assumeNotNull(CAST(42 AS Nullable(Int32)));
+-- Result: 42
+```
+
+## Low Cardinality Conversion
+
+### toLowCardinality
+
+Converts to LowCardinality type for memory optimization.
+
+```sql
+SELECT toLowCardinality('hello');
+
+SELECT toTypeName(toLowCardinality('hello'));
+-- Result: 'LowCardinality(String)'
+```
+
+## Type Information Functions
+
+### toTypeName
+
+Returns the type name of a value.
+
+```sql
+SELECT toTypeName(42);
+-- Result: 'UInt8'
+
+SELECT toTypeName('hello');
+-- Result: 'String'
+
+SELECT toTypeName(now());
+-- Result: 'DateTime'
+
+SELECT toTypeName([1, 2, 3]);
+-- Result: 'Array(UInt8)'
+```
+
+### toColumnTypeName
+
+Returns the type name of a column.
+
+```sql
+SELECT toColumnTypeName(number) FROM numbers(1);
+-- Result: 'UInt64'
+```
+
+## Conversion Best Practices
+
+1. **Use Explicit Conversions**: Always explicitly convert types for clarity
+2. **Choose Appropriate Sizes**: Use the smallest type that fits your data
+3. **Handle Errors**: Use `OrZero`, `OrNull`, or `OrDefault` variants when input quality is uncertain
+4. **Consider Performance**: Direct conversions are faster than CAST in some cases
+5. **Mind Precision Loss**: Be aware of precision loss when converting floats to integers
+
+## Common Patterns
+
+```sql
+-- Parse string dates
+SELECT toDate(JSONExtractString(json_data, 'date')) FROM table;
+
+-- Convert arrays
+SELECT arrayMap(x -> toString(x), [1, 2, 3]);
+-- Result: ['1', '2', '3']
+
+-- Safe parsing from external data
+SELECT 
+    toInt32OrNull(column1) as safe_int,
+    toDateOrZero(column2) as safe_date
+FROM imported_data;
+```
+
+## See Also
+
+- [String Functions](/functions/string)
+- [Date and Time Functions](/functions/date-time)
+- [Array Functions](/functions/array)

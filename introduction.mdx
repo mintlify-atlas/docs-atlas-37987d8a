@@ -1,0 +1,114 @@
+---
+title: Introduction to ClickHouse
+description: Learn about ClickHouse, the fast open-source column-oriented database for real-time analytics
+---
+
+# Introduction to ClickHouse
+
+ClickHouse is an open-source column-oriented database management system that allows generating analytical data reports in real-time.
+
+## What Makes ClickHouse Special?
+
+ClickHouse works **100-1000x faster** than traditional database management systems, processing hundreds of millions to over a billion rows and tens of gigabytes of data per server per second. With a widespread user base around the globe, the technology has received praise for its reliability, ease of use, and fault tolerance.
+
+### Key Features
+
+<CardGroup cols={2}>
+  <Card title="Blazing Fast Performance" icon="bolt" href="/performance/benchmarks">
+    Column-oriented storage and vectorized query execution deliver unprecedented speed for analytical queries
+  </Card>
+  
+  <Card title="Real-Time Analytics" icon="chart-line" href="/quickstart">
+    Query billions of rows in milliseconds with OLAP-optimized architecture
+  </Card>
+  
+  <Card title="SQL Compatible" icon="database" href="/tutorial">
+    Use familiar SQL syntax with powerful extensions for analytical workloads
+  </Card>
+  
+  <Card title="Highly Scalable" icon="arrows-maximize" href="/engines/mergetree">
+    Scale horizontally across clusters while maintaining query performance
+  </Card>
+  
+  <Card title="Compression & Storage" icon="compress" href="/engines/mergetree">
+    Advanced compression algorithms reduce storage costs by 10x or more
+  </Card>
+  
+  <Card title="Easy to Use" icon="rocket" href="/installation">
+    Get started in minutes with Docker, native packages, or ClickHouse Cloud
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+ClickHouse's columnar storage format is optimized for analytical processing:
+
+- **Column-Oriented Storage**: Data is stored by columns rather than rows, enabling efficient compression and faster query performance for analytical workloads
+- **Vectorized Execution**: Processes data in batches using SIMD instructions for maximum CPU efficiency
+- **Multiple Table Engines**: Choose from `MergeTree`, `ReplicatedMergeTree`, `Log`, and more based on your use case
+- **Distributed Query Processing**: Automatically parallelize queries across multiple nodes
+
+<Note>
+ClickHouse is particularly well-suited for:
+- Web and app analytics
+- Monitoring and observability
+- Business intelligence
+- Time-series data analysis
+- Log processing and analysis
+</Note>
+
+## Getting Started
+
+<Steps>
+  <Step title="Install ClickHouse">
+    Choose your preferred installation method from Docker, native packages, or cloud deployment
+    
+    [View Installation Guide →](/installation)
+  </Step>
+  
+  <Step title="Run Your First Query">
+    Connect to ClickHouse and execute your first analytical query in under 5 minutes
+    
+    [Follow Quickstart →](/quickstart)
+  </Step>
+  
+  <Step title="Learn the Basics">
+    Explore tables, data types, and queries through our hands-on tutorial
+    
+    [Start Tutorial →](/tutorial)
+  </Step>
+</Steps>
+
+## Use Cases
+
+ClickHouse powers analytics for companies worldwide:
+
+- **Web Analytics**: Track user behavior, page views, and conversion funnels at massive scale
+- **Observability**: Store and query logs, metrics, and traces for monitoring infrastructure
+- **Business Intelligence**: Build real-time dashboards and reports on operational data
+- **Ad Tech**: Process billions of ad impressions and clicks for campaign optimization
+- **IoT & Sensors**: Analyze time-series data from millions of connected devices
+
+## Community & Support
+
+<CardGroup cols={2}>
+  <Card title="Documentation" icon="book" href="https://clickhouse.com/docs">
+    Comprehensive guides and API references
+  </Card>
+  
+  <Card title="Slack Community" icon="slack" href="https://clickhouse.com/slack">
+    Chat with ClickHouse users in real-time
+  </Card>
+  
+  <Card title="GitHub Repository" icon="github" href="https://github.com/ClickHouse/ClickHouse">
+    Contribute to the open-source project
+  </Card>
+  
+  <Card title="ClickHouse Cloud" icon="cloud" href="https://clickhouse.cloud">
+    Managed service by the creators of ClickHouse
+  </Card>
+</CardGroup>
+
+## What's Next?
+
+Ready to experience ClickHouse's performance? Start with our [Quickstart Guide](/quickstart) to run your first query in minutes.

@@ -1,0 +1,484 @@
+---
+title: url
+description: Read and write data from HTTP/HTTPS endpoints
+---
+
+# url
+
+The `url` table function creates a table from data available at an HTTP or HTTPS endpoint. It can read data from URLs and send data via HTTP POST requests.
+
+## Syntax
+
+```sql
+url(uri [, format [, structure [, compression]]] [, headers(...)])
+```
+
+<ParamField path="uri" type="String" required>
+  The URL to read from or write to. Supports:
+  - HTTP and HTTPS protocols
+  - Glob patterns in URL paths: `{1..10}`, `{a,b,c}`, `*`, `?`
+  - Multiple URLs for parallel reading
+</ParamField>
+
+<ParamField path="format" type="String" default="auto">
+  Data format. When set to `auto`, ClickHouse attempts to detect the format from the URL path extension. Supported formats include: CSV, TSV, JSONEachRow, Parquet, and many others.
+</ParamField>
+
+<ParamField path="structure" type="String" default="auto">
+  Table structure as `column1_name column1_type, column2_name column2_type, ...`. When set to `auto`, the structure is automatically inferred by making a request to the URL and analyzing the response data.
+</ParamField>
+
+<ParamField path="compression" type="String" default="auto">
+  Compression method. Supported values: `none`, `auto`, `gzip`, `gz`, `brotli`, `lz4`, `zstd`, `xz`, `lzma`, `bz2`, `snappy`, `deflate`. When set to `auto`, compression is detected from response headers or URL extension.
+</ParamField>
+
+<ParamField path="headers" type="Function" default="none">
+  Optional HTTP headers specified as `headers('name1' = 'value1', 'name2' = 'value2')`. Can be used to set custom request headers like authorization tokens, content types, etc.
+</ParamField>
+
+## Description
+
+The `url` function retrieves data from web servers via HTTP/HTTPS. It's useful for:
+
+- Reading data from REST APIs
+- Accessing public datasets
+- Integrating with web services
+- Downloading files from URLs
+- Sending data to HTTP endpoints
+
+### HTTP Methods
+
+- **GET** - Used for `SELECT` queries (reading data)
+- **POST** - Used for `INSERT` queries (writing data)
+
+### Schema Inference
+
+When `structure` is set to `auto`, ClickHouse makes a request to the URL and attempts to infer the schema from the response data:
+
+```sql
+-- Automatically detect both format and structure
+SELECT * FROM url('https://example.com/data.json')
+
+-- Explicitly specify format, auto-detect structure  
+SELECT * FROM url('https://example.com/data.csv', 'CSV', 'auto')
+```
+
+## Examples
+
+### Basic Reading
+
+```sql
+-- Read JSON data from an API
+SELECT * FROM url(
+    'https://api.example.com/users',
+    'JSONEachRow',
+    'id UInt32, name String, email String'
+)
+
+-- Read CSV with automatic schema detection
+SELECT * FROM url('https://example.com/data.csv')
+
+-- Read Parquet file from cloud storage
+SELECT * FROM url(
+    'https://storage.example.com/data.parquet',
+    'Parquet'
+)
+```
+
+### Using Custom Headers
+
+```sql
+-- Add authorization header
+SELECT * FROM url(
+    'https://api.example.com/protected',
+    'JSONEachRow',
+    headers('Authorization' = 'Bearer token123')
+)
+
+-- Multiple headers
+SELECT * FROM url(
+    'https://api.example.com/data',
+    'CSV',
+    'id UInt32, value String',
+    headers(
+        'Authorization' = 'Bearer token123',
+        'X-API-Key' = 'key456',
+        'Accept' = 'text/csv'
+    )
+)
+
+-- Empty headers function
+SELECT * FROM url(
+    'https://example.com/data.json',
+    'JSONEachRow',
+    headers()
+)
+```
+
+### Reading Multiple URLs
+
+```sql
+-- Read from multiple endpoints using glob patterns
+SELECT * FROM url(
+    'https://api.example.com/data/shard_{1..3}.json',
+    'JSONEachRow'
+)
+
+-- Alternative syntax with list
+SELECT * FROM url(
+    'https://api.example.com/data/shard_{a,b,c}.csv',
+    'CSV',
+    'id UInt32, value String'
+)
+
+-- Pattern matching in path
+SELECT * FROM url(
+    'https://example.com/logs/2024-01-{01..31}.log',
+    'LineAsString'
+)
+```
+
+### Working with Compression
+
+```sql
+-- Read gzip-compressed data (auto-detected)
+SELECT * FROM url(
+    'https://example.com/data.csv.gz',
+    'CSV'
+)
+
+-- Explicitly specify compression
+SELECT * FROM url(
+    'https://example.com/data.csv',
+    'CSV',
+    'id UInt32, value String',
+    'gzip'
+)
+
+-- Read zstd-compressed JSON
+SELECT * FROM url(
+    'https://example.com/data.json.zst',
+    'JSONEachRow'
+)
+```
+
+### Writing Data via HTTP POST
+
+```sql
+-- Send data to an HTTP endpoint
+INSERT INTO FUNCTION url(
+    'https://api.example.com/upload',
+    'JSONEachRow',
+    'id UInt32, data String'
+)
+SELECT id, data FROM source_table
+
+-- Send CSV data with headers
+INSERT INTO FUNCTION url(
+    'https://api.example.com/ingest',
+    'CSV',
+    headers('Content-Type' = 'text/csv', 'X-Upload-Key' = 'secret')
+)
+SELECT * FROM my_table
+
+-- Send compressed data
+INSERT INTO FUNCTION url(
+    'https://api.example.com/upload',
+    'JSONEachRow',
+    'id UInt32, value String',
+    'gzip'
+)
+SELECT * FROM events WHERE date = today()
+```
+
+### Querying REST APIs
+
+```sql
+-- GitHub API example
+SELECT 
+    name,
+    stargazers_count,
+    forks_count
+FROM url(
+    'https://api.github.com/users/ClickHouse/repos',
+    'JSONEachRow',
+    headers('User-Agent' = 'ClickHouse')
+)
+WHERE stargazers_count > 100
+ORDER BY stargazers_count DESC
+LIMIT 10
+
+-- Weather API example
+SELECT 
+    JSONExtractString(json, 'location', 'name') as city,
+    JSONExtractFloat(json, 'current', 'temp_c') as temperature
+FROM (
+    SELECT * FROM url(
+        'https://api.weatherapi.com/v1/current.json?key=KEY&q=London',
+        'LineAsString'
+    )
+) AS data(json)
+```
+
+### Virtual Columns
+
+```sql
+-- Access URL metadata
+SELECT 
+    _path,          -- Request URL
+    _file,          -- File name from URL
+    count() AS rows
+FROM url('https://example.com/data/*.csv', 'CSV')
+GROUP BY _path, _file
+
+-- Filter by virtual columns
+SELECT * FROM url('https://example.com/logs/2024-*.log', 'LineAsString')
+WHERE _file LIKE '%2024-01%'
+```
+
+### Using with Named Collections
+
+```sql
+-- Define a named collection (in server config)
+-- <named_collections>
+--   <api_endpoint>
+--     <url>https://api.example.com/data</url>
+--     <format>JSONEachRow</format>
+--     <headers>
+--       <Authorization>Bearer token</Authorization>
+--     </headers>
+--   </api_endpoint>
+-- </named_collections>
+
+-- Use the named collection
+SELECT * FROM url(api_endpoint)
+
+-- Override parameters
+SELECT * FROM url(api_endpoint, structure = 'id UInt32, name String')
+```
+
+## Creating Tables with url
+
+### Create View
+
+```sql
+-- Create a view based on URL data
+CREATE VIEW api_data AS
+SELECT * FROM url(
+    'https://api.example.com/data',
+    'JSONEachRow',
+    'id UInt32, timestamp DateTime, value Float64'
+)
+```
+
+### Create Table with URL Engine
+
+```sql
+-- Create a table backed by URL
+CREATE TABLE exchange_rates (
+    date Date,
+    currency String,
+    rate Float64
+)
+ENGINE = URL('https://api.example.com/rates.csv', 'CSV')
+
+-- With custom headers
+CREATE TABLE api_table (
+    id UInt32,
+    data String
+)
+ENGINE = URL(
+    'https://api.example.com/endpoint',
+    'JSONEachRow',
+    headers('Authorization' = 'Bearer token')
+)
+```
+
+## Data Formats
+
+The `url` function supports all ClickHouse input/output formats:
+
+### Common API Formats
+- `JSONEachRow` - One JSON object per line
+- `JSONCompactEachRow` - Compact JSON format
+- `CSV`, `TSV` - Standard delimited formats
+- `LineAsString` - Each line as a single string
+
+### Binary Formats
+- `Parquet` - Apache Parquet
+- `Arrow` - Apache Arrow
+- `Avro` - Apache Avro
+- `Protobuf` - Protocol Buffers
+
+### Full Format List
+
+See [Formats documentation](/integration/data-formats) for all supported formats.
+
+## Settings
+
+### URL-Specific Settings
+
+```sql
+-- Maximum URL redirects to follow
+SET max_http_get_redirects = 10
+
+-- HTTP connection timeout
+SET http_connection_timeout = 30
+
+-- HTTP receive timeout  
+SET http_receive_timeout = 300
+
+-- HTTP send timeout
+SET http_send_timeout = 300
+
+-- Enable/disable HTTP compression
+SET enable_http_compression = 1
+
+-- Maximum download size
+SET max_download_buffer_size = 10485760  -- 10MB
+```
+
+### Format Settings
+
+```sql
+-- CSV settings for API responses
+SELECT * FROM url('https://example.com/data.csv', 'CSV')
+SETTINGS 
+    format_csv_delimiter = ';',
+    input_format_csv_skip_first_lines = 1
+
+-- JSON settings
+SELECT * FROM url('https://api.example.com/data', 'JSONEachRow')
+SETTINGS 
+    input_format_json_read_numbers_as_strings = 1,
+    input_format_json_read_bools_as_numbers = 1
+```
+
+## Security and Access Control
+
+### Permissions
+
+```sql
+-- Grant URL access to a user
+GRANT URL ON *.* TO username
+
+-- Revoke URL access
+REVOKE URL ON *.* FROM username
+```
+
+### URL Filtering
+
+Server configuration can restrict accessible URLs:
+
+```xml
+<remote_url_allow_hosts>
+    <host_regexp>^https://api\.example\.com/.*</host_regexp>
+</remote_url_allow_hosts>
+```
+
+### Forbidden Headers
+
+Some headers are forbidden for security reasons:
+- Headers controlling authentication (managed by ClickHouse)
+- Headers that could cause SSRF attacks
+- Implementation-specific headers
+
+```sql
+-- This will fail
+SELECT * FROM url(
+    'https://example.com',
+    'CSV',
+    headers('Host' = 'evil.com')  -- Forbidden header
+)  -- Error: BAD_ARGUMENTS
+```
+
+## Performance Tips
+
+### Parallel Reading
+
+```sql
+-- ClickHouse parallelizes requests for glob patterns
+SELECT * FROM url(
+    'https://api.example.com/shard_{1..10}.json',
+    'JSONEachRow'
+)
+-- Makes 10 parallel HTTP requests
+```
+
+### Connection Pooling
+
+ClickHouse maintains connection pools for repeated requests:
+
+```sql
+-- Subsequent requests reuse connections
+SELECT count() FROM url('https://api.example.com/data', 'JSONEachRow')
+UNION ALL
+SELECT count() FROM url('https://api.example.com/data', 'JSONEachRow')
+```
+
+### Caching
+
+For frequently accessed URLs, consider materialized views:
+
+```sql
+CREATE MATERIALIZED VIEW cached_api_data
+ENGINE = MergeTree()
+ORDER BY id
+AS SELECT * FROM url('https://api.example.com/data', 'JSONEachRow')
+```
+
+## Cluster Functions
+
+For distributed queries across a cluster, use `urlCluster`:
+
+```sql
+-- Distribute URL reading across cluster nodes
+SELECT * FROM urlCluster(
+    'my_cluster',
+    'https://example.com/data_{1..100}.csv',
+    'CSV'
+)
+```
+
+See [remote](/functions/table/remote) for more on cluster functions.
+
+## Error Handling
+
+```sql
+-- URL not accessible
+SELECT * FROM url('https://nonexistent.example.com/data')
+-- Error: CANNOT_DETECT_FORMAT, POCO_EXCEPTION, or RECEIVED_ERROR_FROM_REMOTE_IO_SERVER
+
+-- Invalid format
+SELECT * FROM url('https://example.com/data', 'InvalidFormat')
+-- Error: Unknown format
+
+-- Access denied  
+SELECT * FROM url('https://blocked.example.com/')
+-- Error: URL is not allowed in configuration
+```
+
+## Comparison with Other Functions
+
+| Feature | url | file | s3 |
+|---------|-----|------|----|
+| Protocol | HTTP/HTTPS | Local FS | S3 API |
+| Glob support | Yes | Yes | Yes |
+| Headers | Yes | No | Custom S3 |
+| POST writes | Yes | No | Yes |
+| Compression | Auto | Auto | Auto |
+
+## Limitations
+
+- Schema inference requires making an initial HTTP request
+- Some websites may block or rate-limit ClickHouse requests
+- Large responses may consume significant memory
+- POST writes send entire dataset in one request
+- Readonly mode restrictions for security (can be disabled)
+
+## See Also
+
+- [file](/functions/table/file) - Read from local files
+- [remote](/functions/table/remote) - Query remote ClickHouse servers  
+- [URL Storage Engine](/engines/table-engines/special/url)
+- [HTTP Interface](/interfaces/http)

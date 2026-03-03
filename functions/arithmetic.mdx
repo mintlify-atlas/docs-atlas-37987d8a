@@ -1,0 +1,171 @@
+---
+title: Arithmetic Functions
+description: Arithmetic operators and functions for mathematical calculations in ClickHouse
+---
+
+ClickHouse provides a comprehensive set of arithmetic operators and functions for performing mathematical calculations on numeric data types.
+
+## Basic Arithmetic Operators
+
+The standard arithmetic operators work with all numeric types and follow SQL conventions.
+
+| Operator | Function | Description | Example |
+|----------|----------|-------------|----------|
+| `+` | `plus` | Addition | `SELECT 2 + 3` |
+| `-` | `minus` | Subtraction | `SELECT 5 - 2` |
+| `*` | `multiply` | Multiplication | `SELECT 4 * 3` |
+| `/` | `divide` | Division | `SELECT 10 / 2` |
+| `%` | `modulo` | Modulo (remainder) | `SELECT 10 % 3` |
+
+## Arithmetic Functions
+
+### abs
+
+Returns the absolute value of a number.
+
+```sql
+SELECT abs(-42);
+-- Result: 42
+
+SELECT abs(3.14);
+-- Result: 3.14
+```
+
+### negate
+
+Negates a number (changes its sign).
+
+```sql
+SELECT negate(42);
+-- Result: -42
+
+SELECT negate(-10);
+-- Result: 10
+```
+
+### gcd
+
+Calculates the greatest common divisor of two numbers.
+
+```sql
+SELECT gcd(12, 18);
+-- Result: 6
+```
+
+### lcm
+
+Calculates the least common multiple of two numbers.
+
+```sql
+SELECT lcm(4, 6);
+-- Result: 12
+```
+
+## Date Arithmetic
+
+Arithmetic operators work with date and time types:
+
+```sql
+-- Add days to a date
+SELECT today() + 1;
+
+-- Subtract dates
+SELECT today() - yesterday();
+-- Result: 1
+
+-- DateTime arithmetic
+SELECT toDateTime('2023-01-01 00:00:00') + 3600;
+-- Adds 3600 seconds (1 hour)
+```
+
+## Division Variants
+
+### divide
+
+Standard division operator. Division by zero throws an exception.
+
+```sql
+SELECT 10 / 2;
+-- Result: 5
+```
+
+### intDiv
+
+Integer division (returns the quotient without remainder).
+
+```sql
+SELECT intDiv(10, 3);
+-- Result: 3
+```
+
+### intDivOrZero
+
+Integer division that returns 0 instead of throwing an exception on division by zero.
+
+```sql
+SELECT intDivOrZero(10, 0);
+-- Result: 0
+```
+
+## Modulo Variants
+
+### modulo
+
+Returns the remainder after division.
+
+```sql
+SELECT 10 % 3;
+-- Result: 1
+
+SELECT modulo(10, 3);
+-- Result: 1
+```
+
+### moduloOrZero
+
+Returns the remainder, or 0 if the divisor is zero.
+
+```sql
+SELECT moduloOrZero(10, 0);
+-- Result: 0
+```
+
+### positiveModulo
+
+Returns a positive modulo result (always returns a value in the range [0, divisor)).
+
+```sql
+SELECT positiveModulo(-10, 3);
+-- Result: 2
+```
+
+## Type Handling
+
+Arithmetic operations automatically handle type promotion:
+
+```sql
+-- Integer + Float = Float
+SELECT toTypeName(1 + 1.5);
+-- Result: Float64
+
+-- DateTime + Integer = DateTime
+SELECT toTypeName(now() + 1);
+-- Result: DateTime
+
+-- Date arithmetic returns Int32
+SELECT toTypeName(today() - yesterday());
+-- Result: Int32
+```
+
+## Performance Considerations
+
+- Arithmetic operations are highly optimized and vectorized
+- Division is slower than multiplication
+- Use `intDiv` when you only need the quotient for better performance
+- Overflow behavior depends on the data types involved
+
+## See Also
+
+- [Comparison Functions](/functions/comparison)
+- [Type Conversion Functions](/functions/type-conversion)
+- [Math Functions](https://clickhouse.com/docs/en/sql-reference/functions/math-functions)

@@ -1,0 +1,157 @@
+---
+title: Table Engines Overview
+description: Comprehensive guide to ClickHouse table engines and their use cases
+---
+
+Table engines determine:
+- How and where data is stored
+- Which queries are supported
+- Whether data is replicated
+- How data is indexed and merged
+- Concurrent data access characteristics
+- Use of indexes and other optimizations
+
+## Engine Categories
+
+<CardGroup cols={2}>
+  <Card title="MergeTree Family" icon="layer-group" href="/engines/mergetree-family">
+    High-performance engines for production use with sorting, indexing, and background merging
+  </Card>
+  
+  <Card title="Log Family" icon="file-lines" href="/engines/log-family">
+    Lightweight engines for small tables and temporary data with minimal overhead
+  </Card>
+  
+  <Card title="Integration Engines" icon="plug" href="/engines/integrations">
+    Connect to external databases and message queues (MySQL, PostgreSQL, Kafka, MongoDB)
+  </Card>
+  
+  <Card title="Special Engines" icon="wand-sparkles" href="/engines/special">
+    In-memory, distributed, and virtual table engines for specific use cases
+  </Card>
+</CardGroup>
+
+## Choosing the Right Engine
+
+### For Production Data
+
+Use **MergeTree family** engines (`src/Storages/StorageMergeTree.h`, `src/Storages/StorageReplicatedMergeTree.h`) for:
+- High-volume analytical workloads
+- Time-series data
+- Real-time analytics
+- Data requiring replication
+
+### For Small Tables
+
+Use **Log family** engines (`src/Storages/StorageLog.h`, `src/Storages/StorageStripeLog.h`) for:
+- Small reference tables (< 1M rows)
+- Temporary data
+- Development and testing
+- Minimal storage overhead
+
+### For External Data
+
+Use **Integration engines** (`src/Storages/StorageMySQL.h`, `src/Storages/Kafka/StorageKafka.h`) for:
+- Querying external databases
+- Real-time data ingestion
+- ETL pipelines
+- Federated queries
+
+### For Specialized Use Cases
+
+Use **Special engines** (`src/Storages/StorageMemory.h`, `src/Storages/StorageDistributed.h`) for:
+- Temporary query results
+- Distributed queries across shards
+- Table unions
+- Dictionary lookups
+
+## Engine Comparison
+
+| Feature | MergeTree | Log | Integration | Special |
+|---------|-----------|-----|-------------|----------|
+| **Performance** | Excellent | Good | Variable | Excellent |
+| **Scalability** | High | Low | Medium | High |
+| **Replication** | Yes | No | No | Yes |
+| **Indexing** | Primary + Skip | None | Limited | Variable |
+| **Compression** | Yes | Yes | No | Variable |
+| **Best for** | Production | Small data | External sources | Specific needs |
+
+## Common Features
+
+### Data Compression
+
+Most engines support compression codecs:
+```sql
+CREATE TABLE table (
+    column Type CODEC(ZSTD)
+) ENGINE = MergeTree()
+ORDER BY column;
+```
+
+### Partitioning
+
+MergeTree family supports partitioning:
+```sql
+CREATE TABLE table (
+    date Date,
+    value UInt64
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(date)
+ORDER BY date;
+```
+
+### TTL (Time To Live)
+
+Automatic data expiration:
+```sql
+CREATE TABLE table (
+    timestamp DateTime,
+    data String
+) ENGINE = MergeTree()
+ORDER BY timestamp
+TTL timestamp + INTERVAL 30 DAY;
+```
+
+## Source Code Reference
+
+All table engines are implemented in `src/Storages/`:
+
+- **Base class**: `src/Storages/IStorage.h`
+- **Factory**: `src/Storages/StorageFactory.h`
+- **MergeTree base**: `src/Storages/MergeTree/MergeTreeData.h`
+- **Settings**: `src/Storages/MergeTree/MergeTreeSettings.h`
+
+## Performance Considerations
+
+### Write Performance
+
+- **MergeTree**: Excellent for batch inserts, background merging
+- **Log**: Good for append-only workloads
+- **Memory**: Best for temporary data
+- **Distributed**: Parallel writes to multiple shards
+
+### Read Performance
+
+- **MergeTree**: Optimized with primary key and skip indexes
+- **Log**: Sequential scans only
+- **Distributed**: Parallel reads from shards
+- **Dictionary**: Optimized key-value lookups
+
+### Storage Efficiency
+
+- **MergeTree**: Excellent compression (10-100x)
+- **Log**: Good compression
+- **Memory**: No compression (RAM only)
+- **Distributed**: Depends on underlying engine
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MergeTree Engines" icon="database" href="/engines/mergetree-family">
+    Learn about production-ready engines
+  </Card>
+  
+  <Card title="Integration Engines" icon="arrows-turn-to-dots" href="/engines/integrations">
+    Connect to external data sources
+  </Card>
+</CardGroup>

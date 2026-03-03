@@ -1,0 +1,582 @@
+---
+title: SELECT Query Syntax
+description: Complete reference for SELECT queries including JOINs, subqueries, window functions, and advanced features
+---
+
+## Overview
+
+The SELECT statement retrieves data from tables. ClickHouse extends standard SQL SELECT with performance optimizations and analytical features.
+
+## Basic SELECT
+
+<CodeGroup>
+```sql Simple Select
+SELECT 1;
+```
+
+```sql Select Columns
+SELECT user_id, username, email
+FROM users;
+```
+
+```sql Select All
+SELECT * FROM events;
+```
+
+```sql With Aliases
+SELECT
+    user_id AS id,
+    username AS name,
+    created_at AS registered
+FROM users;
+```
+</CodeGroup>
+
+## SELECT Clause
+
+### DISTINCT
+
+Remove duplicate rows:
+
+<CodeGroup>
+```sql Distinct Rows
+SELECTE DISTINCT country FROM users;
+```
+
+```sql Distinct On
+SELECT DISTINCT ON (user_id) *
+FROM events
+ORDER BY user_id, event_time DESC;
+```
+</CodeGroup>
+
+### TOP Clause
+
+Limit results (SQL Server style):
+
+```sql
+SELECT TOP 10 * FROM events
+ORDER BY event_time DESC;
+```
+
+## FROM Clause
+
+### Table References
+
+<CodeGroup>
+```sql Simple Table
+SELECT * FROM users;
+```
+
+```sql Database Qualified
+SELECT * FROM analytics.users;
+```
+
+```sql With Alias
+SELECT u.user_id, u.username
+FROM users AS u;
+```
+
+```sql Subquery
+SELECT * FROM (
+    SELECT user_id, count() AS cnt
+    FROM events
+    GROUP BY user_id
+) AS user_counts
+WHERE cnt > 10;
+```
+</CodeGroup>
+
+### FINAL Modifier
+
+Get deduplicated data from ReplicatedMergeTree:
+
+```sql
+SELECT * FROM users FINAL
+WHERE status = 'active';
+```
+
+### SAMPLE Clause
+
+Sample data for faster approximate results:
+
+<CodeGroup>
+```sql Sample Ratio
+SELECT avg(amount) FROM orders SAMPLE 0.1;  -- 10% sample
+```
+
+```sql Sample Rows
+SELECT * FROM events SAMPLE 1000000;  -- 1M rows
+```
+
+```sql Sample with Offset
+SELECT * FROM events SAMPLE 1/10 OFFSET 1/2;
+```
+</CodeGroup>
+
+## JOIN Clauses
+
+### INNER JOIN
+
+<CodeGroup>
+```sql Using ON
+SELECT
+    u.username,
+    o.order_id,
+    o.amount
+FROM users AS u
+INNER JOIN orders AS o ON u.user_id = o.user_id;
+```
+
+```sql Using USING
+SELECT
+    username,
+    order_id,
+    amount
+FROM users
+INNER JOIN orders USING (user_id);
+```
+
+```sql Multiple Conditions
+SELECT *
+FROM t1
+JOIN t2 ON t1.id = t2.id AND t1.type = t2.type;
+```
+</CodeGroup>
+
+### LEFT JOIN
+
+```sql
+SELECT
+    u.user_id,
+    u.username,
+    count(o.order_id) AS order_count
+FROM users AS u
+LEFT JOIN orders AS o ON u.user_id = o.user_id
+GROUP BY u.user_id, u.username;
+```
+
+### RIGHT JOIN
+
+```sql
+SELECT *
+FROM orders AS o
+RIGHT JOIN users AS u ON o.user_id = u.user_id
+ORDER BY u.user_id;
+```
+
+### FULL OUTER JOIN
+
+```sql
+SELECT
+    coalesce(t1.id, t2.id) AS id,
+    t1.value AS left_value,
+    t2.value AS right_value
+FROM table1 AS t1
+FULL OUTER JOIN table2 AS t2 ON t1.id = t2.id
+ORDER BY id;
+```
+
+### CROSS JOIN
+
+Cartesian product:
+
+```sql
+SELECT *
+FROM t1
+CROSS JOIN t2;
+```
+
+### SEMI JOIN
+
+Return rows from left table that have matches in right table:
+
+```sql
+SELECT * FROM users
+SEMI LEFT JOIN orders USING (user_id);
+```
+
+### ANTI JOIN
+
+Return rows from left table that have no matches in right table:
+
+```sql
+SELECT * FROM users
+ANTI LEFT JOIN orders USING (user_id);
+```
+
+### ARRAY JOIN
+
+Expand arrays into rows:
+
+<CodeGroup>
+```sql Basic Array Join
+SELECT user_id, tag
+FROM users
+ARRAY JOIN tags AS tag;
+```
+
+```sql Left Array Join
+SELECT user_id, tag
+FROM users
+LEFT ARRAY JOIN tags AS tag;
+```
+
+```sql Multiple Arrays
+SELECT user_id, hobby, skill
+FROM users
+ARRAY JOIN hobbies AS hobby, skills AS skill;
+```
+</CodeGroup>
+
+### JOIN Settings
+
+```sql
+SELECT * FROM t1
+JOIN t2 USING (id)
+SETTINGS join_use_nulls = 1, join_algorithm = 'hash';
+```
+
+#### Parameters
+
+<ParamField path="join_use_nulls" type="boolean" default="0">
+  When enabled, columns from non-matching rows are filled with NULL values instead of default values.
+</ParamField>
+
+<ParamField path="join_algorithm" type="enum" default="auto">
+  Join algorithm: `auto`, `hash`, `partial_merge`, `full_sorting_merge`, `grace_hash`.
+</ParamField>
+
+## WHERE Clause
+
+Filter rows based on conditions:
+
+<CodeGroup>
+```sql Simple Filter
+SELECT * FROM users
+WHERE status = 'active';
+```
+
+```sql Multiple Conditions
+SELECT * FROM events
+WHERE event_date >= '2024-01-01'
+  AND event_type = 'click'
+  AND user_id > 1000;
+```
+
+```sql IN Operator
+SELECT * FROM users
+WHERE country IN ('US', 'UK', 'CA');
+```
+
+```sql IN Subquery
+SELECT * FROM users
+WHERE user_id IN (
+    SELECT user_id FROM orders
+    WHERE order_date >= '2024-01-01'
+);
+```
+</CodeGroup>
+
+## PREWHERE Clause
+
+ClickHouse-specific optimization for early filtering:
+
+```sql
+SELECT *
+FROM events
+PREWHERE event_date >= '2024-01-01'
+WHERE user_id > 1000 AND event_type = 'purchase';
+```
+
+<Tip>
+Use PREWHERE for filtering on columns that significantly reduce data volume. ClickHouse automatically applies PREWHERE optimization in many cases.
+</Tip>
+
+## GROUP BY Clause
+
+Group rows for aggregation:
+
+<CodeGroup>
+```sql Basic Group By
+SELECT
+    country,
+    count() AS user_count
+FROM users
+GROUP BY country;
+```
+
+```sql Multiple Columns
+SELECT
+    country,
+    status,
+    count() AS cnt
+FROM users
+GROUP BY country, status;
+```
+
+```sql With Expressions
+SELECT
+    toYYYYMM(event_date) AS month,
+    count() AS events
+FROM events
+GROUP BY toYYYYMM(event_date);
+```
+</CodeGroup>
+
+### WITH TOTALS
+
+Add totals row:
+
+```sql
+SELECT
+    country,
+    count() AS cnt
+FROM users
+GROUP BY country
+WITH TOTALS;
+```
+
+### WITH ROLLUP
+
+Add subtotals:
+
+```sql
+SELECT
+    country,
+    city,
+    count() AS cnt
+FROM users
+GROUP BY country, city
+WITH ROLLUP;
+```
+
+### WITH CUBE
+
+Add all combinations of subtotals:
+
+```sql
+SELECT
+    country,
+    status,
+    count() AS cnt
+FROM users
+GROUP BY country, status
+WITH CUBE;
+```
+
+## HAVING Clause
+
+Filter grouped results:
+
+```sql
+SELECT
+    country,
+    count() AS user_count
+FROM users
+GROUP BY country
+HAVING user_count > 1000;
+```
+
+## ORDER BY Clause
+
+Sort results:
+
+<CodeGroup>
+```sql Ascending
+SELECT * FROM users
+ORDER BY created_at ASC;
+```
+
+```sql Descending
+SELECT * FROM users
+ORDER BY created_at DESC;
+```
+
+```sql Multiple Columns
+SELECT * FROM events
+ORDER BY event_date DESC, event_time DESC;
+```
+
+```sql With Nulls
+SELECT * FROM users
+ORDER BY last_login DESC NULLS LAST;
+```
+</CodeGroup>
+
+## LIMIT Clause
+
+<CodeGroup>
+```sql Limit Rows
+SELECT * FROM events
+ORDER BY event_time DESC
+LIMIT 100;
+```
+
+```sql Limit with Offset
+SELECT * FROM events
+ORDER BY event_time DESC
+LIMIT 100 OFFSET 200;
+```
+
+```sql Alternative Syntax
+SELECT * FROM events
+ORDER BY event_time DESC
+LIMIT 200, 100;  -- offset, limit
+```
+
+```sql With Ties
+SELECT * FROM users
+ORDER BY score DESC
+LIMIT 10 WITH TIES;
+```
+</CodeGroup>
+
+## Window Functions
+
+<CodeGroup>
+```sql ROW_NUMBER
+SELECT
+    user_id,
+    event_time,
+    row_number() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
+FROM events;
+```
+
+```sql RANK and DENSE_RANK
+SELECT
+    user_id,
+    score,
+    rank() OVER (ORDER BY score DESC) AS rank,
+    dense_rank() OVER (ORDER BY score DESC) AS dense_rank
+FROM scores;
+```
+
+```sql LAG and LEAD
+SELECT
+    event_time,
+    value,
+    lag(value) OVER (ORDER BY event_time) AS prev_value,
+    lead(value) OVER (ORDER BY event_time) AS next_value
+FROM metrics;
+```
+</CodeGroup>
+
+### WINDOW Clause
+
+Define named windows:
+
+```sql
+SELECT
+    user_id,
+    row_number() OVER w AS rn,
+    rank() OVER w AS rank
+FROM events
+WINDOW w AS (PARTITION BY user_id ORDER BY event_time);
+```
+
+### QUALIFY Clause
+
+Filter by window function results:
+
+```sql
+SELECT
+    user_id,
+    event_time,
+    row_number() OVER (PARTITION BY user_id ORDER BY event_time DESC) AS rn
+FROM events
+QUALIFY rn = 1;
+```
+
+## UNION
+
+Combine results from multiple queries:
+
+<CodeGroup>
+```sql UNION ALL
+SELECT user_id FROM table1
+UNION ALL
+SELECT user_id FROM table2;
+```
+
+```sql UNION DISTINCT
+SELECT user_id FROM table1
+UNION DISTINCT
+SELECT user_id FROM table2;
+```
+</CodeGroup>
+
+## Subqueries
+
+<CodeGroup>
+```sql Scalar Subquery
+SELECT
+    user_id,
+    amount,
+    (SELECT avg(amount) FROM orders) AS avg_amount
+FROM orders;
+```
+
+```sql Correlated Subquery
+SELECT user_id, username
+FROM users u
+WHERE (SELECT count() FROM orders o WHERE o.user_id = u.user_id) > 5;
+```
+
+```sql EXISTS
+SELECT * FROM users
+WHERE EXISTS (
+    SELECT 1 FROM orders
+    WHERE orders.user_id = users.user_id
+);
+```
+</CodeGroup>
+
+## WITH Clause (CTE)
+
+Common Table Expressions:
+
+<CodeGroup>
+```sql Single CTE
+WITH active_users AS (
+    SELECT user_id FROM users WHERE status = 'active'
+)
+SELECT count()
+FROM events
+WHERE user_id IN active_users;
+```
+
+```sql Multiple CTEs
+WITH
+    new_users AS (
+        SELECT user_id FROM users WHERE created_at >= '2024-01-01'
+    ),
+    purchases AS (
+        SELECT user_id, sum(amount) AS total
+        FROM orders
+        GROUP BY user_id
+    )
+SELECT
+    n.user_id,
+    p.total
+FROM new_users n
+LEFT JOIN purchases p USING (user_id);
+```
+</CodeGroup>
+
+## Performance Tips
+
+<Tip>
+- Use PREWHERE for filtering on partition key or primary key columns
+- Leverage SAMPLE for exploratory analysis on large datasets
+- Place most selective filters first in WHERE clause
+- Use appropriate JOIN algorithm based on table sizes
+- Consider materialized views for frequently used aggregations
+</Tip>
+
+## Reference
+
+See also:
+- [SQL Operators](/sql/operators)
+- [INSERT Statements](/sql/insert)
+- [Aggregate Functions](/functions/aggregate)

@@ -1,0 +1,285 @@
+---
+title: clickhouse-obfuscator
+description: Data obfuscation tool for anonymizing datasets while preserving structure
+---
+
+The `clickhouse-obfuscator` utility transforms datasets to anonymize sensitive data while preserving statistical properties and performance characteristics. This enables sharing production-like data for benchmarking, testing, and debugging without exposing real information.
+
+## Overview
+
+The obfuscator reads table data and produces output that retains essential properties:
+
+- **Cardinality** - Number of distinct values per column and column combinations
+- **Compression ratio** - LZ77 and entropy codec efficiency
+- **Data distributions** - Value magnitude, string lengths, NULL frequency
+- **Performance characteristics** - Query execution speed on obfuscated data matches original
+
+The tool uses cryptographic primitives and Markov models to transform data deterministically based on a seed value.
+
+## Usage
+
+```bash
+clickhouse-obfuscator [options] < input > output
+```
+
+Input must be a seekable file (it will be read twice - once for training, once for generation).
+
+## Command-Line Options
+
+### Required Options
+
+| Option | Description |
+|--------|-------------|
+| `--seed SEED` | Random seed string (at least 10 bytes recommended) |
+| `--input-format FORMAT` | Input data format (TSV, CSV, JSONEachRow, etc.) |
+| `--output-format FORMAT` | Output data format |
+
+### Structure Options
+
+| Option | Description |
+|--------|-------------|
+| `-S, --structure STRUCTURE` | Table structure (column names and types). If not specified, structure is auto-detected from input. |
+
+### Model Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--order N` | 5 | Order of Markov model for generating strings |
+| `--frequency-cutoff N` | 5 | Frequency cutoff: remove buckets with count less than N |
+| `--num-buckets-cutoff N` | 0 | Remove histograms with fewer than N buckets |
+| `--frequency-add N` | 0 | Add constant to counts to reduce distribution skew |
+| `--frequency-desaturate F` | 0 | Value 0..1 to move frequencies toward average |
+| `--determinator-sliding-window-size N` | 8 | Sliding window size for RNG seed in Markov model |
+
+### Processing Options
+
+| Option | Description |
+|--------|-------------|
+| `--limit N` | Generate N rows (can be larger than source to loop through data with different seeds) |
+| `--save FILE` | Save trained model to file for reuse |
+| `--load FILE` | Load pre-trained model from file |
+| `--silent BOOL` | Don't print progress messages to stderr (default: false) |
+
+### Other Options
+
+| Option | Description |
+|--------|-------------|
+| `--help` | Show help message and documentation |
+
+## Examples
+
+### Basic obfuscation
+
+```bash
+clickhouse-obfuscator \
+  --seed "$(head -c16 /dev/urandom | base64)" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'CounterID UInt32, URLDomain String, URL String, SearchPhrase String, Title String' \
+  < stats.tsv > obfuscated.tsv
+```
+
+### Auto-detect structure from input
+
+```bash
+clickhouse-obfuscator \
+  --seed "my-secret-seed-12345" \
+  --input-format CSV \
+  --output-format CSV \
+  < input.csv > output.csv
+```
+
+### Save model for reuse
+
+```bash
+# Train and save model
+clickhouse-obfuscator \
+  --seed "seed123" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'id UInt64, name String, value Float64' \
+  --save model.bin \
+  --limit 0 \
+  < data.tsv > /dev/null
+
+# Reuse saved model
+clickhouse-obfuscator \
+  --seed "seed123" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'id UInt64, name String, value Float64' \
+  --load model.bin \
+  < data.tsv > obfuscated.tsv
+```
+
+### Generate more data than source
+
+```bash
+clickhouse-obfuscator \
+  --seed "seed456" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'UserID UInt64, URL String' \
+  --limit 1000000 \
+  < sample_1000.tsv > generated_1000000.tsv
+```
+
+This loops through the source data multiple times with different seeds to generate 1 million rows from 1000 source rows.
+
+### Adjust Markov model parameters
+
+```bash
+clickhouse-obfuscator \
+  --seed "seed789" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'Title String' \
+  --order 7 \
+  --frequency-cutoff 10 \
+  --frequency-add 5 \
+  < titles.tsv > obfuscated_titles.tsv
+```
+
+Higher `--order` creates more realistic strings but requires more memory. Higher `--frequency-cutoff` removes rare patterns.
+
+## Data Transformation Methods
+
+### Numeric Types
+
+- **Unsigned integers**: Pseudorandom permutation preserving order of magnitude
+- **Signed integers**: Preserve sign, transform absolute value
+- **Floats**: Preserve exponent, randomize mantissa with continuity
+- **Date**: Unchanged (preserves date distribution)
+- **DateTime**: Preserve date component, transform time-of-day
+
+The transformations keep values 0, 1, and -1 unchanged.
+
+### String Types
+
+- **String**: Markov model generates new strings with similar character patterns
+- **FixedString**: Pseudorandom transformation preserving word characters
+- **UUID**: Randomize while preserving version and variant fields
+
+### Complex Types
+
+- **Array**: Transform nested elements, preserve array lengths
+- **Nullable**: Transform nested values, preserve NULL flags
+
+## Properties Preserved
+
+<AccordionGroup>
+  <Accordion title="Cardinality">
+    Number of distinct values for each column and column combination remains the same. `COUNT(DISTINCT column)` returns identical results.
+  </Accordion>
+  
+  <Accordion title="Conditional Cardinality">
+    Number of distinct values in one column for a fixed value of another column is preserved.
+  </Accordion>
+  
+  <Accordion title="Compression Ratio">
+    Data compresses with similar efficiency using LZ4, ZSTD, and other codecs.
+  </Accordion>
+  
+  <Accordion title="Value Distributions">
+    - Magnitude of integers (most significant bit position)
+    - Sign distribution
+    - String length distribution
+    - Frequency of zeros, empty strings, NULLs
+  </Accordion>
+  
+  <Accordion title="Continuity">
+    - Time values maintain temporal continuity
+    - Floating-point values maintain magnitude differences
+  </Accordion>
+  
+  <Accordion title="Data Validity">
+    - UTF-8 validity preserved for strings
+    - Strings look somewhat natural
+  </Accordion>
+</AccordionGroup>
+
+## Security Considerations
+
+<Warning>
+The obfuscator is **not cryptographically secure**. Do not rely on it for true data privacy.
+</Warning>
+
+### Known Limitations
+
+1. **Preserves cardinalities**: If source data has a user who visited 10 countries, this property remains in obfuscated data
+2. **Deterministic**: Same seed produces same output; transformation may be reversible
+3. **Small datasets**: Works poorly with less than 1000 rows
+4. **Rare values**: May reproduce uncommon values from source
+5. **Metadata leakage**: Preserves column types, counts, distributions
+
+### Recommendations
+
+- Use a random seed with at least 10 bytes of entropy
+- Keep the seed secret
+- Review obfuscated output before publishing
+- Consider removing or transforming particularly sensitive columns manually
+- Use large enough datasets (thousands of rows minimum)
+
+## Model File Format
+
+Saved models (via `--save`) use binary, platform-dependent serialization:
+
+- Version byte (currently 0)
+- Source row count
+- Column data types
+- Model parameters and statistics
+
+Models are **not portable** across different ClickHouse versions or platforms. The seed is **not saved** in the model file.
+
+## Use Cases
+
+### Performance Testing
+
+Create realistic benchmark datasets:
+
+```bash
+clickhouse-obfuscator \
+  --seed "$(openssl rand -base64 16)" \
+  --input-format Native \
+  --output-format Native \
+  < production_dump.native > benchmark_data.native
+```
+
+### Bug Reports
+
+Share data that reproduces issues without exposing sensitive information:
+
+```bash
+clickhouse-obfuscator \
+  --seed "bug-report-42" \
+  --input-format TSV \
+  --output-format TSV \
+  --structure 'id UInt64, data String' \
+  < failing_query_data.tsv > bug_report_data.tsv
+```
+
+### Development/Testing Environments
+
+Generate production-like data for development:
+
+```bash
+clickhouse-obfuscator \
+  --seed "dev-env-seed" \
+  --input-format CSV \
+  --output-format CSV \
+  --limit 100000 \
+  < production_sample.csv > dev_data.csv
+```
+
+## Notes
+
+- Input must be seekable (regular file, not pipe)
+- Reads data twice: once for training models, once for generation
+- Memory usage depends on data cardinality and Markov model order
+- Processing speed: approximately 100K-1M rows/second (depends on data complexity)
+- Works with any ClickHouse-supported format (not limited to ClickHouse databases)
+
+## See Also
+
+- [Original blog post on obfuscation methodology](https://clickhouse.com/blog/whats-new-in-clickhouse-obfuscator)
+- [Example datasets](https://clickhouse.com/docs/en/getting-started/example-datasets/metrica/)

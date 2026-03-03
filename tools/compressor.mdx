@@ -1,0 +1,144 @@
+---
+title: clickhouse-compressor
+description: Compress and decompress files using ClickHouse codecs
+---
+
+The `clickhouse-compressor` utility compresses and decompresses files using ClickHouse compression codecs. It supports various compression algorithms including LZ4, LZ4HC, ZSTD, and parallel compression.
+
+## Usage
+
+```bash
+clickhouse-compressor [options] < INPUT > OUTPUT
+clickhouse-compressor [options] INPUT OUTPUT
+```
+
+## Command-Line Options
+
+### Input/Output
+
+| Option | Description |
+|--------|-------------|
+| `--input FILE` | Input file (reads from stdin if not specified) |
+| `--output FILE` | Output file (writes to stdout if not specified) |
+
+### Compression Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-d, --decompress` | - | Decompress mode |
+| `-b, --block-size SIZE` | 65536 | Compress in blocks of specified size |
+| `--hc` | - | Use LZ4HC instead of LZ4 |
+| `--zstd` | - | Use ZSTD instead of LZ4 |
+| `--none` | - | Use no compression |
+| `--codec CODECS` | - | Use codec combination (space-separated list) |
+| `--level LEVEL` | - | Compression level for codecs specified via flags |
+| `--threads NUM` | 1 | Number of threads for parallel compression |
+
+### Decompression Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--offset-in-compressed-file OFFSET` | 0 | Offset to the compressed block (physical file offset) |
+| `--offset-in-decompressed-block OFFSET` | 0 | Offset to the decompressed block (virtual offset) |
+| `--no-checksum-validation` | - | Disable checksum validation |
+
+### Analysis
+
+| Option | Description |
+|--------|-------------|
+| `--stat` | Print block statistics of compressed data |
+
+### Other Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message |
+| `--stacktrace` | Print stacktrace on exception |
+
+## Examples
+
+### Compress a file with LZ4 (default)
+
+```bash
+clickhouse-compressor < data.tsv > data.tsv.lz4
+```
+
+### Compress with ZSTD
+
+```bash
+clickhouse-compressor --zstd < data.tsv > data.tsv.zstd
+```
+
+### Compress with LZ4HC at specific level
+
+```bash
+clickhouse-compressor --hc --level 9 < data.tsv > data.tsv.lz4hc
+```
+
+### Parallel compression with 4 threads
+
+```bash
+clickhouse-compressor --threads 4 < data.tsv > data.tsv.lz4
+```
+
+### Use custom codec combination
+
+```bash
+clickhouse-compressor --codec ZSTD,Delta,LZ4 < data.tsv > data.tsv.compressed
+```
+
+### Decompress a file
+
+```bash
+clickhouse-compressor -d < data.tsv.lz4 > data.tsv
+```
+
+### Decompress starting from offset
+
+```bash
+clickhouse-compressor -d \
+  --offset-in-compressed-file 1024 \
+  --offset-in-decompressed-block 512 \
+  < data.tsv.lz4 > data.tsv
+```
+
+### View compression statistics
+
+```bash
+clickhouse-compressor --stat < data.tsv.lz4
+```
+
+The `--stat` option outputs codec information and block sizes:
+```
+LZ4    1048576    524288
+LZ4    1048576    524288
+LZ4    524288     262144
+```
+
+Each line shows: codec name, decompressed size, compressed size.
+
+## Notes
+
+- The default compression codec is LZ4
+- The default block size is 65536 bytes (64 KB)
+- Parallel compression only works for compression, not decompression
+- The `--codec` option and codec flags (`--hc`, `--zstd`, `--none`) are mutually exclusive
+- The `--level` option is not compatible with `--codec` list
+- Compressed files use ClickHouse-specific format with checksums for data integrity
+
+## Supported Codecs
+
+The utility supports all ClickHouse compression codecs:
+
+- `LZ4` - Fast compression (default)
+- `LZ4HC` - High compression ratio variant of LZ4
+- `ZSTD` - Zstandard compression
+- `NONE` - No compression
+- `Delta` - Delta encoding
+- `DoubleDelta` - Double delta encoding
+- `Gorilla` - Gorilla compression for timestamps and floating-point values
+- And others supported by ClickHouse
+
+## See Also
+
+- [Compression Documentation](https://clickhouse.com/docs/en/operations/utilities/clickhouse-compressor/)

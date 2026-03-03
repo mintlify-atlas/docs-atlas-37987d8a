@@ -1,0 +1,252 @@
+---
+title: Aggregate Functions Overview
+description: Overview of aggregate functions in ClickHouse
+---
+
+Aggregate functions in ClickHouse perform calculations on a set of values and return a single result. They are used in `SELECT` queries with `GROUP BY` clauses, or on the entire table when no grouping is specified.
+
+## What Are Aggregate Functions?
+
+Aggregate functions operate on sets of rows and compute a single result value. For example:
+
+```sql
+SELECT sum(salary) FROM employees;
+```
+
+When used with `GROUP BY`, they compute separate results for each group:
+
+```sql
+SELECT department, avg(salary) FROM employees GROUP BY department;
+```
+
+## Categories of Aggregate Functions
+
+ClickHouse provides over 100 aggregate functions organized into these categories:
+
+### Standard Aggregate Functions
+
+Basic statistical and mathematical aggregations:
+
+- **Counting**: `count`, `countDistinct`
+- **Sum/Average**: `sum`, `avg`, `sumWithOverflow`, `sumKahan`, `avgWeighted`
+- **Min/Max**: `min`, `max`, `any`, `anyLast`, `anyHeavy`
+- **Statistical**: `stddevPop`, `stddevSamp`, `varPop`, `varSamp`, `covarPop`, `covarSamp`, `corr`
+- **Bitwise**: `groupBitAnd`, `groupBitOr`, `groupBitXor`
+
+See [Standard Aggregate Functions](./standard) for complete documentation.
+
+### Approximate Aggregations
+
+Functions that trade precision for performance:
+
+- **Distinct counting**: `uniq`, `uniqExact`, `uniqCombined`, `uniqTheta`, `uniqHLL12`
+- **Quantiles**: `quantile`, `quantileTDigest`, `quantileExact`, `quantileTiming`
+- **Top-K**: `topK`, `topKWeighted`
+
+### Array and Collection Functions
+
+- `groupArray` - collect values into an array
+- `groupArrayLast` - collect last N values
+- `groupArraySample` - random sample of values
+- `groupUniqArray` - collect unique values
+- `groupArrayMovingSum`, `groupArrayMovingAvg` - moving window aggregations
+
+### Specialized Functions
+
+- **Time series**: `exponentialMovingAverage`, `deltaSum`, `deltaSumTimestamp`
+- **Statistical tests**: `kolmogorovSmirnovTest`, `mannWhitneyUTest`, `studentTTest`
+- **Information theory**: `entropy`, `categoricalInformationValue`
+- **ML/Analytics**: `simpleLinearRegression`, `stochasticLinearRegression`, `contingencyCoefficient`
+
+## Function Combinators
+
+Combinators are suffixes that modify aggregate function behavior:
+
+- `-If` - conditional aggregation
+- `-Array` - aggregate array elements
+- `-State` - return intermediate state
+- `-Merge` - merge intermediate states
+- `-ForEach` - apply to each array element
+- `-OrNull` - return NULL for empty sets
+- `-OrDefault` - return default for empty sets
+- `-Resample` - time-based resampling
+- `-Distinct` - aggregate only distinct values
+- `-Map` - aggregate Map values by key
+
+See [Function Combinators](./combinators) for detailed documentation.
+
+## Parametric Aggregate Functions
+
+Some functions accept parameters that configure their behavior:
+
+```sql
+-- Quantile with level parameter
+SELECT quantile(0.95)(response_time) FROM requests;
+
+-- Top-K with count parameter
+SELECT topK(10)(product_id) FROM sales;
+
+-- Histogram with bucket count
+SELECT histogram(100)(value) FROM measurements;
+
+-- Retention with event conditions
+SELECT retention(event = 'signup', event = 'purchase') FROM events;
+```
+
+See [Parametric Aggregate Functions](./parametric) for complete documentation.
+
+## Performance Characteristics
+
+### Memory Usage
+
+Aggregate functions maintain state in memory:
+
+- **Constant memory**: `count`, `sum`, `avg`, `min`, `max` - O(1)
+- **Linear memory**: `groupArray`, `uniqExact` - O(n)
+- **Bounded memory**: `uniqCombined`, `quantileTDigest`, `topK` - O(k) where k is configurable
+
+### Optimizations
+
+<Accordion title="COUNT() Optimization">
+ClickHouse optimizes `count()` queries on `MergeTree` tables using metadata:
+
+```sql
+SELECT count() FROM table;
+-- Reads only metadata, not data
+```
+
+Disable with `optimize_trivial_count_query = 0` if row-level security is needed.
+</Accordion>
+
+<Accordion title="COUNT(DISTINCT) Performance">
+`COUNT(DISTINCT expr)` uses the `uniqExact` function by default (configurable via `count_distinct_implementation`).
+
+For better performance on large datasets:
+
+```sql
+-- Add GROUP BY for parallelization
+SELECT user_id, COUNT(DISTINCT product_id) 
+FROM purchases 
+GROUP BY user_id;
+
+-- Or use approximate counting
+SELECT uniqCombined(user_id) FROM visits;
+```
+</Accordion>
+
+<Accordion title="Nullable Column Optimization">
+With `optimize_functions_to_subcolumns = 1`, aggregate functions on Nullable columns read only the null map:
+
+```sql
+SELECT count(nullable_col) FROM table;
+-- Transforms to: SELECT sum(NOT nullable_col.null) FROM table
+```
+</Accordion>
+
+## State Management
+
+Aggregate functions support distributed computation through state serialization:
+
+```sql
+-- Compute partial states on shards
+SELECT sumState(amount) AS partial FROM distributed_table;
+
+-- Merge states for final result
+SELECT sumMerge(partial) FROM (
+    SELECT sumState(amount) AS partial FROM shard1
+    UNION ALL
+    SELECT sumState(amount) AS partial FROM shard2
+);
+```
+
+## NULL Handling
+
+By default, aggregate functions ignore NULL values:
+
+```sql
+SELECT count(x) FROM VALUES('x Nullable(Int32)', 1, 2, NULL, 4);
+-- Result: 3 (NULL is not counted)
+```
+
+Use combinators to change behavior:
+
+```sql
+-- Return NULL for empty result sets
+SELECT avgOrNull(x) FROM empty_table;
+
+-- Count NULLs explicitly
+SELECT countIf(x IS NULL) FROM table;
+```
+
+## Common Patterns
+
+### Conditional Aggregation
+
+```sql
+-- Using -If combinator
+SELECT 
+    countIf(status = 'success') AS success_count,
+    avgIf(response_time, status = 'success') AS avg_response
+FROM requests;
+
+-- Using CASE (less efficient)
+SELECT 
+    sum(CASE WHEN status = 'success' THEN 1 ELSE 0 END),
+    avg(CASE WHEN status = 'success' THEN response_time END)
+FROM requests;
+```
+
+### Multiple Quantiles
+
+```sql
+-- Efficient: single pass
+SELECT quantiles(0.5, 0.9, 0.95, 0.99)(response_time)
+FROM requests;
+
+-- Inefficient: multiple passes
+SELECT 
+    quantile(0.5)(response_time),
+    quantile(0.9)(response_time),
+    quantile(0.95)(response_time)
+FROM requests;
+```
+
+### Grouping Sets
+
+```sql
+SELECT 
+    department,
+    team,
+    count(*) AS employees,
+    avg(salary) AS avg_salary
+FROM employees
+GROUP BY GROUPING SETS (
+    (department, team),
+    (department),
+    ()
+);
+```
+
+## Window Functions vs Aggregate Functions
+
+Aggregate functions can be used in window function contexts:
+
+```sql
+-- Aggregate function: one row per group
+SELECT department, avg(salary)
+FROM employees
+GROUP BY department;
+
+-- Window function: all rows retained
+SELECT 
+    name,
+    salary,
+    avg(salary) OVER (PARTITION BY department) AS dept_avg
+FROM employees;
+```
+
+## See Also
+
+- [Standard Aggregate Functions](./standard) - Complete reference of all standard functions
+- [Function Combinators](./combinators) - Detailed combinator documentation with examples
+- [Parametric Aggregate Functions](./parametric) - Functions with parameters

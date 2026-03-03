@@ -1,0 +1,443 @@
+---
+title: Geospatial Functions
+description: Functions for working with geographic coordinates and spatial data in ClickHouse
+---
+
+ClickHouse provides geospatial functions for working with geographic coordinates, calculating distances, encoding locations, and performing spatial operations.
+
+## Distance Calculations
+
+### greatCircleDistance
+
+Calculates the great-circle distance between two points on Earth using the Haversine formula.
+
+```sql
+-- From test: 01043_geo_distance.sql
+SELECT greatCircleDistance(0., 0., 0., 1.);
+-- Distance from (0°,0°) to (0°,1°)
+
+SELECT greatCircleDistance(0., 89., 0, 90.);
+-- Distance from (0°,89°) to (0°,90°)
+
+SELECT greatCircleDistance(0., 0., 90., 0.);
+-- Distance from (0°,0°) to (90°,0°)
+
+SELECT greatCircleDistance(0., 0., 0., 90.);
+-- Distance from (0°,0°) to (0°,90°)
+```
+
+Parameters: `greatCircleDistance(lon1, lat1, lon2, lat2)`
+- Returns distance in meters
+- Uses spherical Earth model (radius: 6,371 km)
+- Coordinates in decimal degrees
+
+### geoDistance
+
+Similar to `greatCircleDistance`, calculates distance between coordinates.
+
+```sql
+SELECT geoDistance(0., 0., 0., 1.);
+
+SELECT geoDistance(0., 89., 0., 90.);
+
+SELECT geoDistance(0., 0., 90., 0.);
+
+SELECT geoDistance(0., 0., 0., 90.);
+```
+
+### Distance Examples
+
+```sql
+-- Distance between New York and London
+SELECT greatCircleDistance(
+    -74.006, 40.7128,  -- New York (lon, lat)
+    -0.1276, 51.5074   -- London (lon, lat)
+) as distance_meters;
+-- Result: ~5,570,000 meters
+
+-- Find nearby locations
+SELECT 
+    name,
+    geoDistance(user_lon, user_lat, -74.006, 40.7128) as distance
+FROM locations
+WHERE distance < 1000  -- Within 1km
+ORDER BY distance;
+```
+
+## Geohash Functions
+
+Geohash is a geocoding system that encodes geographic coordinates into short strings.
+
+### geohashEncode
+
+Encodes coordinates to a geohash string.
+
+```sql
+-- From test: 00932_geohash_support.sql
+SELECT geohashEncode(-5.60302734375, 42.593994140625, 0);
+-- Precision 0
+
+SELECT geohashEncode(-5.60302734375, 42.593994140625);
+-- Default precision (12)
+
+SELECT geohashEncode(longitude, latitude, 6)
+FROM locations;
+-- 6-character geohash
+```
+
+Parameters: `geohashEncode(longitude, latitude, precision)`
+- `precision`: 1-12 (default: 12)
+- Higher precision = more accurate but longer string
+- Each character adds ~5 bits of precision
+
+### geohashDecode
+
+Decodes a geohash string to coordinates.
+
+```sql
+SELECT geohashDecode('ezs42');
+-- Result: Tuple(longitude, latitude)
+-- Returns center point of geohash cell
+
+SELECT 
+    round(geohashDecode('ezs42').1, 5) as lon,
+    round(geohashDecode('ezs42').2, 5) as lat;
+```
+
+### geohashesInBox
+
+Returns array of geohashes covering a bounding box.
+
+```sql
+SELECT geohashesInBox(
+    -0.2,   -- min_longitude
+    51.4,   -- min_latitude  
+    0.2,    -- max_longitude
+    51.6,   -- max_latitude
+    6       -- precision
+);
+-- Returns array of geohashes covering London area
+```
+
+### Geohash Examples
+
+```sql
+-- From test: 00932_geohash_support.sql
+-- Encode coordinates from table
+CREATE TABLE geohash_test_data (
+    latitude Float64,
+    longitude Float64,
+    encoded String
+) ENGINE = MergeTree ORDER BY (latitude, longitude, encoded);
+
+-- Test with real data
+SELECT 
+    1 as p,
+    geohashEncode(longitude, latitude, p) as actual,
+    if(actual = encoded, 'Ok', concat('expected: ', encoded)) as result
+FROM geohash_test_data
+WHERE length(encoded) = p;
+
+-- Find locations in same geohash cell (nearby)
+SELECT 
+    a.name,
+    b.name,
+    geohashEncode(a.lon, a.lat, 6) as geohash
+FROM locations a
+JOIN locations b 
+    ON geohashEncode(a.lon, a.lat, 6) = geohashEncode(b.lon, b.lat, 6)
+WHERE a.id != b.id;
+```
+
+## H3 Functions
+
+H3 is Uber's hexagonal hierarchical geospatial indexing system.
+
+### geoToH3
+
+Converts coordinates to H3 index.
+
+```sql
+SELECT geoToH3(37.79506683, 55.71290588, 8);
+-- Returns H3 index at resolution 8
+-- Resolution: 0-15 (0=coarse, 15=fine)
+
+SELECT geoToH3(longitude, latitude, 10) as h3_index
+FROM locations;
+```
+
+### h3ToGeo
+
+Converts H3 index to coordinates.
+
+```sql
+SELECT h3ToGeo(599686042433355775);
+-- Result: Tuple(lat, lon) of cell center
+```
+
+### h3ToGeoBoundary
+
+Returns boundary of H3 cell as array of coordinates.
+
+```sql
+SELECT h3ToGeoBoundary(599686042433355775);
+-- Returns array of (lat, lon) pairs forming hexagon boundary
+```
+
+### H3 Resolution Levels
+
+| Resolution | Average Edge Length | Number of Cells |
+|------------|---------------------|------------------|
+| 0 | 1107.71 km | 122 |
+| 5 | 8.54 km | 2,016,842 |
+| 8 | 0.46 km | 691,776,122 |
+| 10 | 65.91 m | 6,917,529,027 |
+| 15 | 0.51 m | 569,707,381,193,162 |
+
+## S2 Functions
+
+S2 is Google's spherical geometry library.
+
+### geoToS2
+
+Converts coordinates to S2 cell ID.
+
+```sql
+SELECT geoToS2(37.79506683, 55.71290588);
+-- Returns S2 cell ID (UInt64)
+
+SELECT geoToS2(longitude, latitude) as s2_id
+FROM locations;
+```
+
+### s2ToGeo
+
+Converts S2 cell ID to coordinates.
+
+```sql
+SELECT s2ToGeo(4704772434919038491);
+-- Result: Tuple(lon, lat) of cell center
+```
+
+## Point in Polygon
+
+### pointInPolygon
+
+Checks if a point is inside a polygon.
+
+```sql
+SELECT pointInPolygon(
+    (3.0, 3.0),  -- point (x, y)
+    [
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 10.0),
+        (0.0, 10.0)
+    ]  -- polygon vertices
+);
+-- Result: 1 (inside)
+
+-- Check if coordinate is in region
+SELECT pointInPolygon(
+    (longitude, latitude),
+    [
+        (-74.1, 40.6),
+        (-73.9, 40.6),
+        (-73.9, 40.8),
+        (-74.1, 40.8)
+    ]
+) as in_nyc
+FROM user_locations;
+```
+
+## Coordinate Transformations
+
+### greatCircleAngle
+
+Calculates the great-circle angle between two points.
+
+```sql
+SELECT greatCircleAngle(
+    lon1, lat1,
+    lon2, lat2
+);
+-- Returns angle in radians
+```
+
+## Geospatial Types
+
+ClickHouse supports geometric data types:
+
+```sql
+-- Point type
+SELECT (10.5, 20.3)::Point;
+
+-- Ring (closed polygon)
+SELECT [(0,0), (10,0), (10,10), (0,10)]::Ring;
+
+-- Polygon with holes
+SELECT [
+    [(0,0), (10,0), (10,10), (0,10)],  -- outer ring
+    [(2,2), (8,2), (8,8), (2,8)]       -- hole
+]::Polygon;
+
+-- MultiPolygon
+SELECT [
+    [[(0,0), (10,0), (10,10), (0,10)]],
+    [[(20,20), (30,20), (30,30), (20,30)]]
+]::MultiPolygon;
+```
+
+## Practical Examples
+
+### Finding Nearby Locations
+
+```sql
+-- Find stores within 5km
+WITH user_location AS (
+    SELECT -74.006 as user_lon, 40.7128 as user_lat
+)
+SELECT 
+    store_name,
+    geoDistance(
+        user_lon, user_lat,
+        store_lon, store_lat
+    ) as distance_meters
+FROM stores, user_location
+WHERE distance_meters < 5000
+ORDER BY distance_meters
+LIMIT 10;
+```
+
+### Geospatial Clustering
+
+```sql
+-- Cluster events by H3 cell
+SELECT 
+    geoToH3(longitude, latitude, 8) as h3_cell,
+    count() as event_count,
+    avg(value) as avg_value
+FROM events
+GROUP BY h3_cell
+ORDER BY event_count DESC;
+```
+
+### Geohash Proximity Search
+
+```sql
+-- Find users in same geohash area (fast proximity)
+SELECT 
+    u1.user_id,
+    u2.user_id,
+    geohashEncode(u1.lon, u1.lat, 5) as area
+FROM users u1
+JOIN users u2 
+    ON geohashEncode(u1.lon, u1.lat, 5) = 
+       geohashEncode(u2.lon, u2.lat, 5)
+WHERE u1.user_id < u2.user_id;
+```
+
+### Bounding Box Queries
+
+```sql
+-- Select points in bounding box
+SELECT *
+FROM locations
+WHERE longitude BETWEEN -74.1 AND -73.9
+  AND latitude BETWEEN 40.6 AND 40.8;
+
+-- More efficient with geohash index
+SELECT *
+FROM locations
+WHERE geohash_6 IN (
+    SELECT arrayJoin(geohashesInBox(
+        -74.1, 40.6, -73.9, 40.8, 6
+    ))
+);
+```
+
+## Performance Optimization
+
+### Indexing Strategies
+
+```sql
+-- Add geohash column for indexing
+ALTER TABLE locations
+ADD COLUMN geohash6 String 
+    DEFAULT geohashEncode(longitude, latitude, 6);
+
+-- Create table with geospatial index
+CREATE TABLE events
+(
+    event_id UInt64,
+    longitude Float64,
+    latitude Float64,
+    h3_index UInt64 MATERIALIZED geoToH3(longitude, latitude, 8),
+    data String
+)
+ENGINE = MergeTree
+ORDER BY (h3_index, event_id);
+```
+
+### Query Optimization
+
+1. **Use geohash/H3 for range queries** - faster than coordinate ranges
+2. **Materialize geospatial indices** - compute once, query many times
+3. **Use appropriate precision** - balance between accuracy and performance
+4. **Pre-filter with bounding box** - before expensive distance calculations
+
+```sql
+-- Optimized nearby search
+SELECT 
+    name,
+    geoDistance(lon, lat, -74.006, 40.7128) as distance
+FROM locations
+WHERE 
+    -- Fast bounding box pre-filter
+    lon BETWEEN -74.1 AND -73.9
+    AND lat BETWEEN 40.6 AND 40.8
+    -- Then precise distance
+    AND distance < 5000
+ORDER BY distance;
+```
+
+## Common Patterns
+
+```sql
+-- Heatmap aggregation
+SELECT 
+    geohashEncode(lon, lat, 6) as cell,
+    count() as intensity,
+    avg(value) as avg_value
+FROM events
+GROUP BY cell;
+
+-- Spatial join (locations within radius)
+SELECT 
+    a.id,
+    b.id,
+    geoDistance(a.lon, a.lat, b.lon, b.lat) as distance
+FROM points a
+CROSS JOIN points b
+WHERE a.id != b.id
+  AND distance < 1000;
+
+-- Route distance calculation
+SELECT 
+    sum(geoDistance(
+        lon, lat,
+        neighbor(lon, 1), neighbor(lat, 1)
+    )) as total_distance
+FROM (
+    SELECT lon, lat
+    FROM route_points
+    ORDER BY sequence
+);
+```
+
+## See Also
+
+- [Geospatial Data Types](https://clickhouse.com/docs/en/sql-reference/data-types/geo)
+- [H3 Documentation](https://h3geo.org/)
+- [S2 Geometry](http://s2geometry.io/)
+- [Hash Functions](/functions/hash)

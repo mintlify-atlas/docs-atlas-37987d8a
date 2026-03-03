@@ -1,0 +1,259 @@
+---
+title: Comparison Functions
+description: Comparison operators and functions for evaluating conditions in ClickHouse
+---
+
+ClickHouse provides a full set of comparison operators for evaluating conditions in WHERE clauses, HAVING clauses, and conditional expressions.
+
+## Comparison Operators
+
+All comparison operators return `UInt8` values: 1 for true, 0 for false.
+
+| Operator | Function | Description | Example |
+|----------|----------|-------------|----------|
+| `=` | `equals` | Equal to | `SELECT 5 = 5` |
+| `!=`, `<>` | `notEquals` | Not equal to | `SELECT 5 != 3` |
+| `<` | `less` | Less than | `SELECT 3 < 5` |
+| `<=` | `lessOrEquals` | Less than or equal | `SELECT 3 <= 5` |
+| `>` | `greater` | Greater than | `SELECT 5 > 3` |
+| `>=` | `greaterOrEquals` | Greater than or equal | `SELECT 5 >= 5` |
+
+## Basic Comparison Examples
+
+```sql
+-- Numeric comparisons
+SELECT 10 > 5;
+-- Result: 1
+
+SELECT 10 = 5;
+-- Result: 0
+
+-- String comparisons (lexicographic)
+SELECT 'apple' < 'banana';
+-- Result: 1
+
+-- Date comparisons
+SELECT today() > yesterday();
+-- Result: 1
+```
+
+## Special Comparison Functions
+
+### IN
+
+Checks if a value is in a set of values or a subquery result.
+
+```sql
+-- Value in list
+SELECT 5 IN (1, 2, 3, 4, 5);
+-- Result: 1
+
+SELECT 'apple' IN ('orange', 'banana');
+-- Result: 0
+
+-- Value in subquery
+SELECT number IN (SELECT number FROM numbers(10) WHERE number % 2 = 0)
+FROM numbers(5);
+```
+
+### NOT IN
+
+Checks if a value is not in a set.
+
+```sql
+SELECT 5 NOT IN (1, 2, 3);
+-- Result: 1
+```
+
+### BETWEEN
+
+Checks if a value is within a range (inclusive).
+
+```sql
+SELECT 5 BETWEEN 1 AND 10;
+-- Result: 1
+
+SELECT 15 BETWEEN 1 AND 10;
+-- Result: 0
+
+-- Equivalent to:
+SELECT 5 >= 1 AND 5 <= 10;
+```
+
+### LIKE
+
+Pattern matching for strings.
+
+```sql
+SELECT 'Hello World' LIKE 'Hello%';
+-- Result: 1
+
+SELECT 'Hello World' LIKE '%World';
+-- Result: 1
+
+SELECT 'Hello World' LIKE '%lo Wo%';
+-- Result: 1
+```
+
+### NOT LIKE
+
+Negated pattern matching.
+
+```sql
+SELECT 'Hello' NOT LIKE 'Goodbye%';
+-- Result: 1
+```
+
+### ILIKE
+
+Case-insensitive pattern matching.
+
+```sql
+SELECT 'Hello World' ILIKE 'hello%';
+-- Result: 1
+```
+
+## NULL Comparisons
+
+Standard comparison operators with NULL return NULL:
+
+```sql
+SELECT NULL = NULL;
+-- Result: NULL
+
+SELECT 5 = NULL;
+-- Result: NULL
+```
+
+### IS NULL / IS NOT NULL
+
+Use these operators to check for NULL values:
+
+```sql
+SELECT NULL IS NULL;
+-- Result: 1
+
+SELECT 5 IS NULL;
+-- Result: 0
+
+SELECT 5 IS NOT NULL;
+-- Result: 1
+```
+
+### isNull / isNotNull
+
+Function forms of NULL checking:
+
+```sql
+SELECT isNull(NULL);
+-- Result: 1
+
+SELECT isNotNull(42);
+-- Result: 1
+```
+
+## Three-Valued Logic Functions
+
+### equals (with NULL handling)
+
+For nullable comparisons, use specialized functions:
+
+```sql
+-- Returns NULL if either operand is NULL
+SELECT equals(5, NULL);
+-- Result: NULL
+```
+
+### isNotDistinctFrom
+
+Compares values treating NULL as equal to NULL:
+
+```sql
+SELECT isNotDistinctFrom(NULL, NULL);
+-- Result: 1
+
+SELECT isNotDistinctFrom(5, NULL);
+-- Result: 0
+```
+
+## String Comparison Functions
+
+### strcmp
+
+Compares two strings, returns -1, 0, or 1:
+
+```sql
+SELECT strcmp('abc', 'def');
+-- Result: -1 (first < second)
+
+SELECT strcmp('abc', 'abc');
+-- Result: 0 (equal)
+
+SELECT strcmp('def', 'abc');
+-- Result: 1 (first > second)
+```
+
+## Type Coercion
+
+ClickHouse performs automatic type coercion for comparisons:
+
+```sql
+-- Integer and Float comparison
+SELECT 5 = 5.0;
+-- Result: 1
+
+-- String and numeric comparison
+SELECT '5' = 5;  -- Converts string to number
+-- Result: 1
+```
+
+## Performance Optimization
+
+### Primary Key Comparisons
+
+Comparisons using primary key columns are optimized:
+
+```sql
+-- Fast: uses primary key index
+SELECT * FROM table WHERE id = 12345;
+
+-- Fast: range scan using index
+SELECT * FROM table WHERE date BETWEEN '2023-01-01' AND '2023-12-31';
+```
+
+### IN vs. Multiple OR
+
+`IN` is more efficient than multiple `OR` conditions:
+
+```sql
+-- Preferred
+SELECT * FROM table WHERE status IN ('active', 'pending', 'processing');
+
+-- Less efficient
+SELECT * FROM table WHERE status = 'active' OR status = 'pending' OR status = 'processing';
+```
+
+## Use in Filtering
+
+```sql
+-- WHERE clause
+SELECT * FROM users WHERE age >= 18;
+
+-- HAVING clause
+SELECT city, count() as cnt
+FROM users
+GROUP BY city
+HAVING cnt > 1000;
+
+-- Conditional expressions
+SELECT
+    name,
+    if(age >= 18, 'adult', 'minor') as category
+FROM users;
+```
+
+## See Also
+
+- [Logical Functions](/functions/logical)
+- [String Functions](/functions/string)
+- [Conditional Functions](https://clickhouse.com/docs/en/sql-reference/functions/conditional-functions)

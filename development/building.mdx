@@ -1,0 +1,365 @@
+---
+title: Building ClickHouse from Source
+description: Learn how to build ClickHouse from source code on Linux, macOS, and FreeBSD
+---
+
+ClickHouse uses CMake and Ninja for building. This guide covers the complete build process from checking out the code to running your first local build.
+
+## Prerequisites
+
+### System Requirements
+
+- **Linux**: Ubuntu 20.04 or higher (recommended), or other Linux distributions
+- **macOS**: macOS 10.15 or higher
+- **FreeBSD**: FreeBSD 12 or higher
+- **RAM**: At least 8GB (16GB+ recommended for faster builds)
+- **Disk Space**: 20GB+ free space
+
+### Required Tools
+
+<Steps>
+
+<Step title="Install build tools">
+
+On **Ubuntu/Debian**:
+```bash
+sudo apt-get update
+sudo apt-get install git cmake ninja-build python3 ccache
+```
+
+On **macOS**:
+```bash
+brew install git cmake ninja ccache
+```
+
+</Step>
+
+<Step title="Install compiler">
+
+ClickHouse requires a modern C++ compiler with C++23 support. The build system uses Clang by default.
+
+**Ubuntu/Debian**:
+```bash
+sudo apt-get install clang-18 lld-18
+```
+
+The build will automatically detect and use the appropriate compiler.
+
+</Step>
+
+<Step title="Clone the repository">
+
+```bash
+git clone --recursive https://github.com/ClickHouse/ClickHouse.git
+cd ClickHouse
+```
+
+<Warning>
+The `--recursive` flag is essential. It initializes all Git submodules, including the sysroot and contrib libraries. Without it, the build will fail.
+</Warning>
+
+If you forgot to use `--recursive`, you can initialize submodules later:
+```bash
+git submodule update --init --recursive
+```
+
+</Step>
+
+</Steps>
+
+## Build Configurations
+
+ClickHouse supports multiple build types, each optimized for different purposes:
+
+| Build Type | Use Case | Optimization | Debug Info |
+|------------|----------|--------------|------------|
+| `Release` | Production builds | `-O3` | None |
+| `RelWithDebInfo` | Development (default) | `-O3` | Full (`-g`) |
+| `Debug` | Debugging | `-Og` | Full (`-g`) |
+| `MinSizeRel` | Size-optimized | `-Os` | None |
+
+The default is `RelWithDebInfo`, which provides both performance and debuggability.
+
+## Building ClickHouse
+
+<Steps>
+
+<Step title="Create build directory">
+
+```bash
+mkdir build
+cd build
+```
+
+You can create multiple build directories for different configurations:
+```bash
+mkdir build_debug build_asan build_tsan
+```
+
+</Step>
+
+<Step title="Configure with CMake">
+
+Basic configuration:
+```bash
+cmake ..
+```
+
+With specific build type:
+```bash
+cmake -DCMAKE_BUILD_TYPE=Debug ..
+```
+
+With custom options:
+```bash
+cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DENABLE_TESTS=ON \
+      -DENABLE_EXAMPLES=ON \
+      ..
+```
+
+</Step>
+
+<Step title="Build the project">
+
+```bash
+cmake --build . --config RelWithDebInfo
+```
+
+For faster builds using multiple cores (Ninja automatically uses all cores):
+```bash
+ninja
+```
+
+<Note>
+Do not use `-j` with Ninja or specify `nproc`. Ninja automatically determines the optimal number of parallel jobs based on your system.
+</Note>
+
+To build only the server binary:
+```bash
+ninja clickhouse-server
+```
+
+To build only the client:
+```bash
+ninja clickhouse-client
+```
+
+</Step>
+
+<Step title="Run ClickHouse">
+
+After building, the binaries are located in `programs/`:
+
+```bash
+./programs/clickhouse-server
+```
+
+Or use the unified binary:
+```bash
+./programs/clickhouse server
+```
+
+</Step>
+
+</Steps>
+
+## Important CMake Options
+
+### Build Control Options
+
+```bash
+# Enable unit tests (default: ON)
+-DENABLE_TESTS=ON
+
+# Enable example programs (default: OFF)
+-DENABLE_EXAMPLES=ON
+
+# Enable benchmark programs (default: OFF)
+-DENABLE_BENCHMARKS=ON
+
+# Enable all external libraries (default: ON)
+-DENABLE_LIBRARIES=ON
+```
+
+### Compiler and Linker Options
+
+```bash
+# Use ccache for faster rebuilds
+-DCOMPILER_CACHE=ccache
+
+# Enable colored compiler output (default: ON)
+-DENABLE_COLORED_BUILD=ON
+
+# Treat warnings as errors (default: ON)
+-DWERROR=ON
+
+# Enable ThinLTO for faster linking (Linux only, default: ON)
+-DENABLE_THINLTO=ON
+```
+
+### Sanitizers and Analysis Tools
+
+```bash
+# Address Sanitizer
+-DSANITIZE=address
+
+# Thread Sanitizer
+-DSANITIZE=thread
+
+# Memory Sanitizer
+-DSANITIZE=memory
+
+# Undefined Behavior Sanitizer
+-DSANITIZE=undefined
+
+# Enable fuzzing with libfuzzer
+-DENABLE_FUZZING=ON
+```
+
+### Debug and Profiling
+
+```bash
+# Disable omit frame pointer for better profiling
+-DDISABLE_OMIT_FRAME_POINTER=ON
+
+# Enable build time profiling
+-DENABLE_BUILD_PROFILING=ON
+
+# Split debug symbols to separate files
+-DSPLIT_DEBUG_SYMBOLS=ON
+```
+
+### Platform-Specific Options
+
+```bash
+# Enable glibc compatibility (Linux x86_64/aarch64, default: ON)
+-DGLIBC_COMPATIBILITY=ON
+
+# Use Musl instead of glibc
+-DUSE_MUSL=ON
+
+# Build standalone Keeper binary
+-DBUILD_STANDALONE_KEEPER=ON
+```
+
+## Advanced Build Scenarios
+
+### Building with Address Sanitizer (ASan)
+
+ASan helps detect memory errors:
+
+```bash
+mkdir build_asan
+cd build_asan
+cmake -DCMAKE_BUILD_TYPE=Debug -DSANITIZE=address ..
+ninja
+```
+
+### Building with Thread Sanitizer (TSan)
+
+TSan helps detect race conditions:
+
+```bash
+mkdir build_tsan
+cd build_tsan
+cmake -DCMAKE_BUILD_TYPE=Debug -DSANITIZE=thread ..
+ninja
+```
+
+### Using ccache for Faster Rebuilds
+
+ccache caches compilation results to speed up rebuilds:
+
+```bash
+cmake -DCOMPILER_CACHE=ccache ..
+```
+
+### Cross-Compilation
+
+The build system supports cross-compilation using the `NATIVE_BUILD_TARGETS` mechanism defined in `CMakeLists.txt:484-495`. Native targets are built for the host platform when cross-compiling.
+
+## Build Artifacts
+
+Successful builds produce several key files in the build directory:
+
+- `programs/clickhouse` - Main unified binary
+- `programs/clickhouse-server` - Server binary (symlink to clickhouse)
+- `programs/clickhouse-client` - Client binary (symlink to clickhouse)
+- `programs/clickhouse-local` - Local mode binary
+- `programs/clickhouse-benchmark` - Benchmarking tool
+- `programs/clickhouse-compressor` - Data compression tool
+
+## Troubleshooting
+
+### Out of Memory During Compilation
+
+If compilation fails due to insufficient memory:
+
+```bash
+# The build system automatically limits parallel jobs based on available memory
+# For machines with less than 8GB RAM, reduce parallelism manually:
+export NINJA_STATUS="[%f/%t %o/sec] "
+```
+
+The CMake configuration automatically adjusts based on available memory (see `CMakeLists.txt:215-227`).
+
+### Submodules Not Initialized
+
+Error: `Submodules are not initialized`
+
+Solution:
+```bash
+git submodule update --init --recursive
+```
+
+### Compiler Not Found
+
+The build requires Clang. Ensure it's installed:
+```bash
+which clang++
+```
+
+### ccache Issues
+
+Clear ccache if you experience strange compilation errors:
+```bash
+ccache -C  # Clear cache
+ccache -s  # Show statistics
+```
+
+## Build Performance Tips
+
+1. **Use ccache**: Speeds up rebuilds significantly
+   ```bash
+   -DCOMPILER_CACHE=ccache
+   ```
+
+2. **Use Ninja**: Faster than Make for large projects (used by default)
+
+3. **Sufficient RAM**: 16GB+ recommended for parallel builds
+
+4. **SSD Storage**: Significantly faster than HDD for compilation
+
+5. **Link-Time Optimization**: Enabled by default with ThinLTO
+   ```bash
+   -DENABLE_THINLTO=ON  # Default on Linux
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Testing Framework" icon="vial" href="/development/testing">
+  Learn how to run tests for your changes
+</Card>
+
+<Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+  Guidelines for contributing code to ClickHouse
+</Card>
+
+<Card title="Architecture" icon="sitemap" href="/development/architecture">
+  Understand ClickHouse's internal architecture
+</Card>
+
+</CardGroup>

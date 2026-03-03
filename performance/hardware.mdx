@@ -1,0 +1,453 @@
+---
+title: Hardware Recommendations
+description: Hardware selection and configuration guidelines for optimal ClickHouse performance
+---
+
+## Overview
+
+ClickHouse performance is heavily influenced by hardware choices. This guide provides recommendations based on the ClickHouse source code implementation and real-world deployments.
+
+## CPU Requirements
+
+### Core Count
+
+ClickHouse is designed for high parallelism:
+
+- **Minimum:** 4 cores
+- **Recommended:** 16+ cores for production
+- **Optimal:** 32-64 cores for high-throughput workloads
+
+Parallelism is controlled at multiple levels:
+
+```sql
+-- Query-level parallelism
+SET max_threads = 16;
+
+-- Background operations (server config)
+background_pool_size = 16
+background_merges_mutations_concurrency_ratio = 2
+```
+
+### CPU Architecture
+
+**Supported Architectures:**
+- x86_64 (Intel, AMD) - Most tested and optimized
+- ARM64 (Graviton, etc.) - Full support with similar performance
+
+<Tip>
+ARM machines in ClickHouse Cloud and CI show similar performance to x86 systems. Don't assume ARM is slower.
+</Tip>
+
+### SIMD Instructions
+
+ClickHouse uses SIMD extensively for:
+- Compression/decompression (see `src/Compression/`)
+- Hash computations (see `src/Common/examples/sip_hash_perf.cpp`)
+- Integer parsing (see `src/IO/examples/parse_int_perf.cpp`)
+- UTF-8 validation (see `src/IO/examples/valid_utf8_perf.cpp`)
+
+**Required:** SSE4.2 (x86) or NEON (ARM)
+**Beneficial:** AVX2, AVX-512 for even better performance
+
+## Memory (RAM)
+
+### Sizing Guidelines
+
+**Minimum:** 8GB
+**Recommended:** 64GB+ for production
+**Formula:** `RAM = (active_dataset_size × 0.5) + (concurrent_queries × query_memory) + 32GB`
+
+### Memory Usage Breakdown
+
+1. **Mark Cache** - Stores index marks
+   ```xml
+   <mark_cache_size>5368709120</mark_cache_size>  <!-- 5GB -->
+   ```
+   Defined in `src/Storages/MarkCache.h`
+
+2. **Uncompressed Cache** - Optional, for frequently accessed data
+   ```xml
+   <uncompressed_cache_size>8589934592</uncompressed_cache_size>  <!-- 8GB -->
+   ```
+
+3. **Query Execution** - Depends on:
+   - `max_memory_usage` (default: 10GB per query)
+   - `max_bytes_before_external_group_by`
+   - Merge operations
+
+4. **Background Merges** - Memory per merge:
+   ```
+   merge_memory = merge_max_block_size × row_size × parts_count
+   ```
+
+   Example with wide rows:
+   - Row size: 100KB
+   - Parts merging: 10
+   - Block size: 8192
+   - Memory: `100KB × 10 × 8192 ≈ 8GB`
+
+<Tip>
+Reduce `merge_max_block_size` for tables with very wide rows to control memory usage during merges.
+</Tip>
+
+### Memory Speed
+
+- **Minimum:** DDR4-2400
+- **Recommended:** DDR4-3200 or higher
+- **Best:** DDR5-4800+ for new deployments
+
+Memory bandwidth matters for compression and large scans.
+
+## Storage
+
+### Storage Types
+
+#### NVMe SSDs (Recommended)
+
+**Best for:**
+- Primary data storage
+- Hot data
+- Frequent merges and compactions
+
+**Specifications:**
+- **IOPS:** 100,000+ random reads
+- **Throughput:** 3,000+ MB/s sequential read
+- **Interface:** PCIe 4.0 or higher
+- **Endurance:** 1+ DWPD (Drive Writes Per Day)
+
+#### SATA SSDs
+
+**Suitable for:**
+- Cold data storage
+- Archive tables
+- Budget-conscious deployments
+
+**Specifications:**
+- **IOPS:** 50,000+ random reads
+- **Throughput:** 500+ MB/s
+
+#### HDDs
+
+**Only for:**
+- Rarely accessed archive data
+- Specific tiered storage strategies
+
+**Not recommended for:**
+- Primary storage (merges will be very slow)
+- Frequently queried data
+
+### Storage Configuration
+
+#### Direct I/O
+
+For large merges, ClickHouse can use direct I/O to bypass OS cache:
+
+```sql
+SETTINGS
+    min_merge_bytes_to_use_direct_io = 10737418240;  -- 10GB
+```
+
+From `src/Storages/MergeTree/MergeTreeSettings.cpp`, when merge size exceeds this threshold, the `O_DIRECT` flag is used.
+
+#### Filesystem Choices
+
+**Recommended:**
+- **Linux:** ext4, XFS
+- **Best for high IOPS:** XFS with proper tuning
+
+**Mount options:**
+```bash
+# /etc/fstab
+/dev/nvme0n1 /var/lib/clickhouse xfs noatime,nodiratime 0 0
+```
+
+**Not recommended:**
+- Compressed filesystems (ZFS with compression) - ClickHouse has its own compression
+- Network filesystems (NFS) for primary storage
+
+### Storage Capacity Planning
+
+**Formula:**
+```
+total_storage = raw_data_size × compression_ratio × replication_factor × 1.5
+```
+
+**Typical compression ratios:**
+- Logs and text: 5-10x
+- Metrics and numbers: 10-20x
+- JSON strings: 3-5x
+
+**Example:**
+- Raw data: 10TB/month
+- Compression: 8x
+- Replication: 2x
+- Storage needed: `10TB / 8 × 2 × 1.5 = 3.75TB/month`
+
+## Network
+
+### Bandwidth Requirements
+
+**Minimum:** 1 Gbps
+**Recommended:** 10 Gbps for production clusters
+**Best:** 25/40/100 Gbps for large deployments
+
+### Network Usage Patterns
+
+1. **Replication Traffic** - Between replicas
+   - Full part data transfer
+   - Continuous background sync
+
+2. **Distributed Queries** - Between shards
+   - Result set merging
+   - Intermediate data transfer
+
+3. **Data Ingestion** - From clients
+   - Batch inserts
+   - Streaming protocols (Kafka, etc.)
+
+### Latency Considerations
+
+- **Same datacenter:** Less than 1ms ideal
+- **Cross-datacenter replication:** Less than 10ms acceptable
+- **Quorum inserts:** Latency directly impacts insert performance
+
+## Testing Hardware Performance
+
+### ClickBench Hardware Test
+
+From `benchmark/README.md`, use the official hardware benchmark:
+
+```bash
+# Download the benchmark script
+wget https://raw.githubusercontent.com/ClickHouse/ClickBench/main/hardware/hardware.sh
+
+# Run the test
+chmod a+x ./hardware.sh
+./hardware.sh
+```
+
+This tests:
+- CPU performance (compression, aggregation)
+- Memory bandwidth
+- Storage I/O
+- Overall query performance
+
+Results are comparable at: https://clickhouse.com/benchmark/hardware/
+
+### clickhouse-benchmark Tool
+
+From `programs/benchmark/` and `docs/en/operations/utilities/clickhouse-benchmark.md`:
+
+```bash
+# Basic benchmark
+clickhouse-benchmark --query "SELECT count() FROM system.numbers LIMIT 100000000" \
+  --iterations 10 \
+  --concurrency 4
+
+# Measure QPS and throughput
+clickhouse-benchmark \
+  --host localhost \
+  --port 9000 \
+  --concurrency 8 \
+  --iterations 100 \
+  < queries.sql
+```
+
+**Output metrics:**
+- QPS (Queries Per Second)
+- RPS (Rows Per Second)
+- MiB/s (Throughput)
+- Percentile latencies (p50, p95, p99)
+
+### Storage Performance Testing
+
+**Sequential write test:**
+```bash
+dd if=/dev/zero of=/var/lib/clickhouse/test bs=1M count=10000 oflag=direct
+```
+
+**Sequential read test:**
+```bash
+dd if=/var/lib/clickhouse/test of=/dev/null bs=1M iflag=direct
+```
+
+**Random I/O test with fio:**
+```bash
+fio --name=random-read \
+  --ioengine=libaio \
+  --direct=1 \
+  --bs=4k \
+  --rw=randread \
+  --size=10G \
+  --numjobs=4 \
+  --runtime=60 \
+  --group_reporting
+```
+
+## Configuration Examples
+
+### Small Deployment (Single Server)
+
+**Hardware:**
+- CPU: 8 cores (Intel Xeon or AMD EPYC)
+- RAM: 32GB
+- Storage: 1TB NVMe SSD
+- Network: 1 Gbps
+
+**Use cases:**
+- Development/testing
+- Small datasets (under 500GB)
+- Low query concurrency
+
+### Medium Deployment (Cluster)
+
+**Per Node:**
+- CPU: 16-32 cores
+- RAM: 128GB
+- Storage: 4-8TB NVMe SSD
+- Network: 10 Gbps
+
+**Cluster size:** 3-9 nodes
+
+**Use cases:**
+- Production analytics
+- Medium datasets (5-50TB)
+- Moderate concurrency (50-200 queries/sec)
+
+### Large Deployment (Distributed)
+
+**Per Node:**
+- CPU: 32-64 cores (AMD EPYC 7003/9004 series recommended)
+- RAM: 256-512GB
+- Storage: 16-32TB NVMe (multiple drives in JBOD)
+- Network: 25/40 Gbps
+
+**Cluster size:** 10-100+ nodes
+
+**Use cases:**
+- Large-scale analytics
+- Petabyte-scale datasets
+- High concurrency (1000+ queries/sec)
+- Real-time data processing
+
+## Cloud Deployments
+
+### AWS Instance Recommendations
+
+**Small:** `r6i.2xlarge` (8 vCPU, 64GB RAM)
+**Medium:** `r6i.4xlarge` (16 vCPU, 128GB RAM)
+**Large:** `r6i.8xlarge` (32 vCPU, 256GB RAM)
+**Storage-optimized:** `i4i.8xlarge` (32 vCPU, 256GB RAM, NVMe)
+**ARM option:** `r7g.4xlarge` (Graviton3, 16 vCPU, 128GB RAM)
+
+### GCP Instance Recommendations
+
+**Small:** `n2-highmem-8` (8 vCPU, 64GB RAM)
+**Medium:** `n2-highmem-16` (16 vCPU, 128GB RAM)
+**Large:** `n2-highmem-32` (32 vCPU, 256GB RAM)
+**Storage:** Attach SSD persistent disks or local SSDs
+
+### Azure Instance Recommendations
+
+**Small:** `E8s_v5` (8 vCPU, 64GB RAM)
+**Medium:** `E16s_v5` (16 vCPU, 128GB RAM)
+**Large:** `E32s_v5` (32 vCPU, 256GB RAM)
+**Storage:** Premium SSD v2 or Ultra Disk
+
+<Tip>
+For cloud deployments, separate storage from compute allows independent scaling. Use object storage (S3, GCS, Azure Blob) for cold data tiers.
+</Tip>
+
+## Monitoring Hardware Performance
+
+### CPU Monitoring
+
+```sql
+SELECT 
+    event_time,
+    ProfileEvent_OSCPUVirtualTimeMicroseconds / 1000000 as cpu_seconds,
+    ProfileEvent_OSCPUWaitMicroseconds / 1000000 as cpu_wait_seconds
+FROM system.metric_log
+WHERE event_time > now() - INTERVAL 1 HOUR
+ORDER BY event_time;
+```
+
+### Memory Monitoring
+
+```sql
+SELECT 
+    metric,
+    value
+FROM system.metrics
+WHERE metric LIKE '%Memory%'
+ORDER BY metric;
+```
+
+### Storage I/O Monitoring
+
+```sql
+SELECT 
+    event_time,
+    ProfileEvent_OSReadBytes / 1024 / 1024 as read_mb,
+    ProfileEvent_OSWriteBytes / 1024 / 1024 as write_mb
+FROM system.metric_log
+WHERE event_time > now() - INTERVAL 1 HOUR
+ORDER BY event_time;
+```
+
+## Best Practices
+
+1. **Use NVMe SSDs** - Essential for good merge performance
+2. **Adequate RAM** - At least 50% of active dataset size
+3. **Modern CPUs** - Recent generation Intel/AMD or ARM (Graviton)
+4. **Fast network** - 10+ Gbps for production clusters
+5. **Monitor continuously** - Track CPU, memory, and I/O metrics
+6. **Test before deploy** - Run ClickBench hardware test
+7. **Plan for growth** - Storage and compute should scale independently
+8. **Use local storage** - Avoid network filesystems for primary data
+
+## Troubleshooting Performance Issues
+
+### Slow Merges
+
+**Check:**
+- Storage IOPS and throughput
+- `merge_max_block_size` setting
+- Background pool configuration
+
+**Solution:**
+- Upgrade to faster NVMe SSDs
+- Increase `background_pool_size`
+- Enable `min_merge_bytes_to_use_direct_io`
+
+### Out of Memory Errors
+
+**Check:**
+- Query memory limits (`max_memory_usage`)
+- Merge memory usage (wide rows)
+- Cache sizes
+
+**Solution:**
+- Add more RAM
+- Reduce `merge_max_block_size`
+- Lower cache sizes
+- Optimize queries to use less memory
+
+### High CPU Usage
+
+**Check:**
+- Query complexity
+- Compression/decompression overhead
+- Number of concurrent queries
+
+**Solution:**
+- Add more CPU cores
+- Optimize query patterns
+- Reduce query concurrency
+- Use lighter compression codecs
+
+## Related Topics
+
+- [Optimization Strategies](/performance/optimization) for MergeTree settings
+- [Query Tuning](/performance/query-tuning) for query-level optimizations
+- [Benchmarks](/performance/benchmarks) for performance testing

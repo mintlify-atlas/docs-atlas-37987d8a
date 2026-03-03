@@ -1,0 +1,227 @@
+---
+title: Performance Optimization
+description: General optimization strategies for ClickHouse MergeTree tables
+---
+
+## Overview
+
+ClickHouse provides extensive optimization capabilities through MergeTree engine settings and table configurations. Understanding these settings is crucial for achieving optimal performance.
+
+## Index Granularity Optimization
+
+### Index Granularity Settings
+
+The primary index granularity controls how many rows correspond to one primary key value:
+
+```sql
+CREATE TABLE my_table (
+    timestamp DateTime,
+    user_id UInt64,
+    message String
+)
+ENGINE = MergeTree
+ORDER BY (user_id, timestamp)
+SETTINGS index_granularity = 8192;
+```
+
+**Key Settings:**
+
+- `index_granularity` (default: 8192) - Maximum number of data rows between index marks
+- `index_granularity_bytes` (default: 10MB) - Maximum size of data granules in bytes
+- `min_index_granularity_bytes` (default: 1024) - Minimum allowed size to prevent accidents
+
+<Tip>
+The `index_granularity_bytes` setting improves performance when selecting data from tables with big rows (tens and hundreds of megabytes). Set `enable_mixed_granularity_parts = true` to enable adaptive granularity.
+</Tip>
+
+### Adaptive Index Granularity
+
+Since ClickHouse 19.11, adaptive index granularity allows the database to automatically adjust granule sizes:
+
+```sql
+SETTINGS 
+    index_granularity_bytes = 10485760,
+    enable_mixed_granularity_parts = true,
+    use_const_adaptive_granularity = false;
+```
+
+## Data Part Format Optimization
+
+### Wide vs Compact Parts
+
+ClickHouse stores data in either Wide or Compact format based on part size:
+
+```sql
+SETTINGS
+    min_bytes_for_wide_part = 10485760,  -- 10MB in open-source
+    min_rows_for_wide_part = 0,
+    min_level_for_wide_part = 0;
+```
+
+- **Wide format**: Each column stored in separate files (better for selective column reads)
+- **Compact format**: All columns in single file (better for small parts)
+
+<Tip>
+In ClickHouse Cloud, `min_bytes_for_wide_part` defaults to 1GB to optimize for cloud storage patterns.
+</Tip>
+
+## Merge Optimization
+
+### Merge Block Size Settings
+
+Control memory usage during merges:
+
+```sql
+SETTINGS
+    merge_max_block_size = 8192,
+    merge_max_block_size_bytes = 10485760;
+```
+
+The `merge_max_block_size` setting affects RAM consumption during merges. For tables with very wide rows:
+
+- If average row size is 100KB
+- Merging 10 parts with default settings
+- RAM usage: `100KB × 10 × 8192 = ~8GB`
+
+<Tip>
+Decrease `merge_max_block_size` to reduce RAM requirements during merges, but this will slow down the merge process.
+</Tip>
+
+### Maximum Merge Sizes
+
+```sql
+SETTINGS
+    max_bytes_to_merge_at_max_space_in_pool = 161061273600,  -- 150GB
+    max_bytes_to_merge_at_min_space_in_pool = 1048576;       -- 1MB
+```
+
+These settings control:
+- Maximum part size created by automatic background merges
+- Merge behavior based on available pool resources
+
+## Vertical Merge Algorithm
+
+Vertical merges process columns independently for better performance with wide tables:
+
+```sql
+SETTINGS
+    enable_vertical_merge_algorithm = 1,
+    vertical_merge_algorithm_min_rows_to_activate = 131072,
+    vertical_merge_algorithm_min_bytes_to_activate = 0,
+    vertical_merge_algorithm_min_columns_to_activate = 11;
+```
+
+**When to use vertical merges:**
+- Tables with 11+ non-primary key columns
+- Parts with 131,072+ rows
+- Wide tables where column-wise processing is more efficient
+
+<Tip>
+Enable `vertical_merge_remote_filesystem_prefetch = true` for better performance when using remote storage like S3.
+</Tip>
+
+## Compression Optimization
+
+### Compression Block Sizes
+
+```sql
+SETTINGS
+    min_compress_block_size = 65536,
+    max_compress_block_size = 1048576;
+```
+
+Smaller blocks:
+- Better random access performance
+- Lower compression ratio
+- Higher CPU usage for decompression
+
+Larger blocks:
+- Better compression ratio
+- Higher latency for small reads
+
+## Sparse Serialization
+
+Optimize storage for columns with many default values:
+
+```sql
+CREATE TABLE my_sparse_table (
+    id UInt64,
+    sparse_column String
+)
+ENGINE = MergeTree
+ORDER BY id
+SETTINGS ratio_of_defaults_for_sparse_serialization = 0.9375;
+```
+
+When 93.75% or more values are defaults, the column uses sparse encoding automatically.
+
+Verify sparse serialization:
+```sql
+SELECT column, serialization_kind 
+FROM system.parts_columns
+WHERE table = 'my_sparse_table';
+```
+
+## Direct I/O for Merges
+
+Reduce OS cache pressure for large merges:
+
+```sql
+SETTINGS
+    min_merge_bytes_to_use_direct_io = 10737418240;  -- 10GB
+```
+
+When merging parts exceeding this threshold, ClickHouse uses the `O_DIRECT` flag to bypass OS page cache.
+
+## Parts Management
+
+### Controlling Part Count
+
+```sql
+SETTINGS
+    parts_to_delay_insert = 150,
+    parts_to_throw_insert = 3000,
+    inactive_parts_to_throw_insert = 0;
+```
+
+These settings prevent "Too many parts" errors by:
+- Delaying inserts when part count reaches threshold
+- Rejecting inserts when limits are exceeded
+
+### Background Operations
+
+```sql
+SETTINGS
+    number_of_free_entries_in_pool_to_execute_mutation = 20,
+    number_of_free_entries_in_pool_to_lower_max_size_of_merge = 8;
+```
+
+These ensure background pool capacity for both merges and mutations.
+
+<Tip>
+The value of `number_of_free_entries_in_pool_to_execute_mutation` should be less than `background_pool_size` × `background_merges_mutations_concurrency_ratio` in server configuration.
+</Tip>
+
+## Old Parts Cleanup
+
+```sql
+SETTINGS
+    old_parts_lifetime = 480;  -- 8 minutes
+```
+
+Inactive parts are retained for this duration to protect against data loss during spontaneous server reboots, as new parts may exist only in OS cache before fsync.
+
+## Best Practices
+
+1. **Start with defaults** - Only adjust settings when you have specific performance issues
+2. **Monitor system.parts** - Watch part count and sizes regularly
+3. **Test changes** - Validate setting changes in non-production environments first
+4. **Use adaptive granularity** - Enable for tables with variable row sizes
+5. **Consider your workload** - Optimize for your specific query patterns
+
+## Related Settings
+
+See also:
+- [Query Tuning](/performance/query-tuning) for query-level optimizations
+- [Hardware Recommendations](/performance/hardware) for infrastructure guidance
+- [Benchmarks](/performance/benchmarks) for performance testing methodologies

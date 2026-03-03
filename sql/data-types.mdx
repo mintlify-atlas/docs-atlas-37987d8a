@@ -1,0 +1,615 @@
+---
+title: Data Types Reference
+description: Complete reference for all ClickHouse data types including numeric, string, date/time, array, and specialized types
+---
+
+## Overview
+
+ClickHouse provides a rich type system optimized for analytical workloads, including numeric types with fixed precision, temporal types with high resolution, and complex nested types.
+
+## Integer Types
+
+Signed and unsigned integer types:
+
+| Type | Size | Range | Unsigned Range |
+|------|------|-------|----------------|
+| `Int8` / `UInt8` | 1 byte | -128 to 127 | 0 to 255 |
+| `Int16` / `UInt16` | 2 bytes | -32,768 to 32,767 | 0 to 65,535 |
+| `Int32` / `UInt32` | 4 bytes | -2^31 to 2^31-1 | 0 to 2^32-1 |
+| `Int64` / `UInt64` | 8 bytes | -2^63 to 2^63-1 | 0 to 2^64-1 |
+| `Int128` / `UInt128` | 16 bytes | -2^127 to 2^127-1 | 0 to 2^128-1 |
+| `Int256` / `UInt256` | 32 bytes | -2^255 to 2^255-1 | 0 to 2^256-1 |
+
+<CodeGroup>
+```sql Integer Columns
+CREATE TABLE metrics (
+    id UInt64,
+    user_id UInt32,
+    counter Int32,
+    tiny_value UInt8,
+    large_number UInt128
+) ENGINE = MergeTree()
+ORDER BY id;
+```
+
+```sql Usage
+INSERT INTO metrics VALUES
+    (1, 12345, -100, 255, 123456789012345678901234567890);
+```
+</CodeGroup>
+
+## Floating Point Types
+
+| Type | Size | Precision |
+|------|------|------------|
+| `Float32` | 4 bytes | ~7 decimal digits |
+| `Float64` | 8 bytes | ~16 decimal digits |
+
+<CodeGroup>
+```sql Float Columns
+CREATE TABLE measurements (
+    temperature Float32,
+    precise_value Float64,
+    coordinate Float64
+) ENGINE = MergeTree()
+ORDER BY tuple();
+```
+
+```sql Usage
+INSERT INTO measurements VALUES
+    (36.6, 3.141592653589793, -122.4194155);
+```
+</CodeGroup>
+
+## Decimal Types
+
+Fixed-precision decimal numbers:
+
+```
+Decimal(P, S)
+Decimal32(S)  -- P from 1 to 9
+Decimal64(S)  -- P from 10 to 18
+Decimal128(S) -- P from 19 to 38
+Decimal256(S) -- P from 39 to 76
+```
+
+Where:
+- `P` = precision (total digits)
+- `S` = scale (digits after decimal point)
+
+<CodeGroup>
+```sql Decimal Columns
+CREATE TABLE financials (
+    price Decimal(10, 2),      -- 99999999.99
+    tax_rate Decimal(5, 4),    -- 0.9999
+    balance Decimal128(4)      -- high precision
+) ENGINE = MergeTree()
+ORDER BY tuple();
+```
+
+```sql Usage
+INSERT INTO financials VALUES
+    (1234.56, 0.0825, 123456789.1234);
+```
+</CodeGroup>
+
+<Note>
+Use Decimal for financial calculations where exact precision is required. Avoid Float for money.
+</Note>
+
+## String Types
+
+### String
+
+Variable-length string (can contain arbitrary bytes including null bytes):
+
+<CodeGroup>
+```sql String Column
+CREATE TABLE users (
+    username String,
+    email String,
+    bio String
+) ENGINE = MergeTree()
+ORDER BY username;
+```
+
+```sql Usage
+INSERT INTO users VALUES
+    ('john_doe', 'john@example.com', 'Software engineer');
+```
+</CodeGroup>
+
+### FixedString
+
+Fixed-length string (padded with null bytes):
+
+<CodeGroup>
+```sql FixedString Column
+CREATE TABLE codes (
+    country_code FixedString(2),
+    hash FixedString(32),
+    uuid_bytes FixedString(16)
+) ENGINE = MergeTree()
+ORDER BY country_code;
+```
+
+```sql Usage
+INSERT INTO codes VALUES
+    ('US', MD5('data'), UUIDStringToNum('123e4567-e89b-12d3-a456-426614174000'));
+```
+</CodeGroup>
+
+<Tip>
+Use FixedString for constant-length data like country codes, hashes, or binary identifiers. It's more efficient than String for fixed-width data.
+</Tip>
+
+## Date and Time Types
+
+### Date
+
+Date without time (stored as days since 1970-01-01):
+
+<CodeGroup>
+```sql Date Column
+CREATE TABLE events (
+    event_date Date,
+    user_id UInt64
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (event_date, user_id);
+```
+
+```sql Usage
+INSERT INTO events VALUES
+    ('2024-01-15', 12345),
+    (today(), 67890);
+```
+</CodeGroup>
+
+### Date32
+
+Extended date range (from 1900-01-01 to 2299-12-31):
+
+```sql
+CREATE TABLE historical_events (
+    event_date Date32,
+    description String
+) ENGINE = MergeTree()
+ORDER BY event_date;
+```
+
+### DateTime
+
+Date and time (Unix timestamp in seconds):
+
+<CodeGroup>
+```sql DateTime Column
+CREATE TABLE logs (
+    log_time DateTime,
+    message String
+) ENGINE = MergeTree()
+ORDER BY log_time;
+```
+
+```sql With Timezone
+CREATE TABLE events (
+    created_at DateTime('America/New_York'),
+    updated_at DateTime('UTC')
+) ENGINE = MergeTree()
+ORDER BY created_at;
+```
+
+```sql Usage
+INSERT INTO logs VALUES
+    ('2024-01-15 10:30:00', 'Application started'),
+    (now(), 'Current event');
+```
+</CodeGroup>
+
+### DateTime64
+
+High-precision date and time (sub-second precision):
+
+<CodeGroup>
+```sql DateTime64 Column
+CREATE TABLE metrics (
+    timestamp DateTime64(3),        -- millisecond precision
+    precise_time DateTime64(6),     -- microsecond precision
+    value Float64
+) ENGINE = MergeTree()
+ORDER BY timestamp;
+```
+
+```sql With Timezone
+CREATE TABLE events (
+    event_time DateTime64(3, 'UTC'),
+    value String
+) ENGINE = MergeTree()
+ORDER BY event_time;
+```
+
+```sql Usage
+INSERT INTO metrics VALUES
+    ('2024-01-15 10:30:00.123', '2024-01-15 10:30:00.123456', 42.5);
+```
+</CodeGroup>
+
+## Boolean Type
+
+`Bool` is an alias for `UInt8` with values 0 (false) and 1 (true):
+
+<CodeGroup>
+```sql Boolean Column
+CREATE TABLE users (
+    user_id UInt64,
+    is_active Bool,
+    is_premium Bool,
+    is_verified Bool
+) ENGINE = MergeTree()
+ORDER BY user_id;
+```
+
+```sql Usage
+INSERT INTO users VALUES
+    (1, true, false, true),
+    (2, 1, 0, 1);
+```
+</CodeGroup>
+
+## UUID Type
+
+Universally Unique Identifier (128-bit):
+
+<CodeGroup>
+```sql UUID Column
+CREATE TABLE sessions (
+    session_id UUID,
+    user_id UInt64,
+    created_at DateTime
+) ENGINE = MergeTree()
+ORDER BY session_id;
+```
+
+```sql Usage
+INSERT INTO sessions VALUES
+    ('123e4567-e89b-12d3-a456-426614174000', 12345, now()),
+    (generateUUIDv4(), 67890, now());
+```
+</CodeGroup>
+
+## IPv4 and IPv6
+
+IP address types:
+
+<CodeGroup>
+```sql IP Columns
+CREATE TABLE connections (
+    ipv4_addr IPv4,
+    ipv6_addr IPv6,
+    timestamp DateTime
+) ENGINE = MergeTree()
+ORDER BY timestamp;
+```
+
+```sql Usage
+INSERT INTO connections VALUES
+    ('192.168.1.1', '::1', now()),
+    (toIPv4('10.0.0.1'), toIPv6('2001:db8::1'), now());
+```
+</CodeGroup>
+
+## Enum Types
+
+Enumerated type with predefined values:
+
+<CodeGroup>
+```sql Enum8
+CREATE TABLE events (
+    status Enum8('pending' = 1, 'processing' = 2, 'completed' = 3, 'failed' = 4),
+    event_time DateTime
+) ENGINE = MergeTree()
+ORDER BY event_time;
+```
+
+```sql Enum16
+CREATE TABLE products (
+    category Enum16(
+        'electronics' = 1,
+        'clothing' = 2,
+        'food' = 3,
+        'books' = 4
+    )
+) ENGINE = MergeTree()
+ORDER BY category;
+```
+
+```sql Usage
+INSERT INTO events VALUES
+    ('pending', now()),
+    ('completed', now());
+```
+</CodeGroup>
+
+## Array Type
+
+Array of elements of the same type:
+
+<CodeGroup>
+```sql Array Columns
+CREATE TABLE posts (
+    post_id UInt64,
+    tags Array(String),
+    view_counts Array(UInt32),
+    scores Array(Float64)
+) ENGINE = MergeTree()
+ORDER BY post_id;
+```
+
+```sql Usage
+INSERT INTO posts VALUES
+    (1, ['tech', 'tutorial', 'clickhouse'], [100, 250, 500], [4.5, 4.8, 4.9]),
+    (2, [], [], []);
+```
+
+```sql Nested Arrays
+CREATE TABLE matrix (
+    data Array(Array(Int32))
+) ENGINE = MergeTree()
+ORDER BY tuple();
+
+INSERT INTO matrix VALUES
+    ([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+```
+</CodeGroup>
+
+## Tuple Type
+
+Fixed-size collection of elements with different types:
+
+<CodeGroup>
+```sql Tuple Columns
+CREATE TABLE locations (
+    location_id UInt64,
+    coordinates Tuple(lat Float64, lon Float64),
+    metadata Tuple(String, UInt32, Bool)
+) ENGINE = MergeTree()
+ORDER BY location_id;
+```
+
+```sql Named Tuple
+CREATE TABLE users (
+    user_id UInt64,
+    name Tuple(first String, last String),
+    settings Tuple(theme String, notifications Bool)
+) ENGINE = MergeTree()
+ORDER BY user_id;
+```
+
+```sql Usage
+INSERT INTO users VALUES
+    (1, ('John', 'Doe'), ('dark', true)),
+    (2, ('Jane', 'Smith'), ('light', false));
+
+SELECT user_id, name.first, name.last FROM users;
+```
+</CodeGroup>
+
+## Map Type
+
+Key-value pairs:
+
+<CodeGroup>
+```sql Map Column
+CREATE TABLE events (
+    event_id UInt64,
+    properties Map(String, String),
+    metrics Map(String, Float64)
+) ENGINE = MergeTree()
+ORDER BY event_id;
+```
+
+```sql Usage
+INSERT INTO events VALUES
+    (1, {'browser': 'Chrome', 'os': 'Linux'}, {'duration': 1.5, 'score': 95.5}),
+    (2, {'browser': 'Firefox', 'os': 'Windows'}, {'duration': 2.1, 'score': 88.0});
+
+SELECT properties['browser'], metrics['score'] FROM events;
+```
+</CodeGroup>
+
+## Nullable Type
+
+Allows NULL values for any type:
+
+<CodeGroup>
+```sql Nullable Columns
+CREATE TABLE users (
+    user_id UInt64,
+    email String,
+    phone Nullable(String),
+    age Nullable(UInt8),
+    last_login Nullable(DateTime)
+) ENGINE = MergeTree()
+ORDER BY user_id;
+```
+
+```sql Usage
+INSERT INTO users VALUES
+    (1, 'john@example.com', '555-1234', 30, '2024-01-15 10:00:00'),
+    (2, 'jane@example.com', NULL, NULL, NULL);
+
+SELECT * FROM users WHERE phone IS NULL;
+```
+</CodeGroup>
+
+<Warning>
+Nullable columns have performance overhead. Use default values or special sentinel values when possible.
+</Warning>
+
+## LowCardinality Type
+
+Optimized storage for columns with few distinct values:
+
+<CodeGroup>
+```sql LowCardinality Columns
+CREATE TABLE events (
+    event_id UInt64,
+    country LowCardinality(String),
+    status LowCardinality(String),
+    event_type LowCardinality(String)
+) ENGINE = MergeTree()
+ORDER BY event_id;
+```
+
+```sql Usage
+INSERT INTO events VALUES
+    (1, 'US', 'active', 'click'),
+    (2, 'UK', 'active', 'view');
+```
+</CodeGroup>
+
+<Tip>
+Use LowCardinality for string columns with fewer than 10,000 distinct values. It provides significant compression and query performance improvements.
+</Tip>
+
+## Nested Type
+
+Nested data structures (deprecated, use Array of Tuples instead):
+
+<CodeGroup>
+```sql Nested (Legacy)
+CREATE TABLE events (
+    event_id UInt64,
+    items Nested(
+        name String,
+        price Decimal(10, 2),
+        quantity UInt32
+    )
+) ENGINE = MergeTree()
+ORDER BY event_id;
+```
+
+```sql Modern Alternative
+CREATE TABLE events (
+    event_id UInt64,
+    items Array(Tuple(
+        name String,
+        price Decimal(10, 2),
+        quantity UInt32
+    ))
+) ENGINE = MergeTree()
+ORDER BY event_id;
+```
+</CodeGroup>
+
+## Special Types
+
+### Nothing
+
+Type that cannot have values (used in special cases):
+
+```sql
+SELECT toTypeName(NULL) AS type;  -- Nullable(Nothing)
+```
+
+### Interval
+
+Time interval (used with date/time operations):
+
+```sql
+SELECT
+    now() + INTERVAL 1 DAY,
+    now() - INTERVAL 2 HOUR,
+    event_date + INTERVAL 1 MONTH
+FROM events;
+```
+
+### AggregateFunction
+
+Stores intermediate aggregation state:
+
+```sql
+CREATE TABLE user_stats (
+    user_id UInt64,
+    total_amount AggregateFunction(sum, Decimal(10, 2)),
+    event_count AggregateFunction(count, UInt64)
+) ENGINE = AggregatingMergeTree()
+ORDER BY user_id;
+```
+
+## JSON Types
+
+### JSON (Experimental)
+
+Dynamic JSON object type:
+
+<CodeGroup>
+```sql JSON Column
+CREATE TABLE events (
+    event_id UInt64,
+    data JSON
+) ENGINE = MergeTree()
+ORDER BY event_id
+SETTINGS allow_experimental_json_type = 1;
+```
+
+```sql Usage
+INSERT INTO events FORMAT JSONEachRow
+{"event_id": 1, "data": {"user": "john", "action": "click", "count": 5}}
+```
+</CodeGroup>
+
+## Type Aliases
+
+Common type aliases:
+
+| Alias | Actual Type |
+|-------|-------------|
+| `TINYINT` | `Int8` |
+| `SMALLINT` | `Int16` |
+| `INT`, `INTEGER` | `Int32` |
+| `BIGINT` | `Int64` |
+| `FLOAT` | `Float32` |
+| `DOUBLE` | `Float64` |
+| `BOOL`, `BOOLEAN` | `UInt8` |
+| `TIMESTAMP` | `DateTime` |
+| `BLOB` | `String` |
+
+## Type Conversions
+
+<CodeGroup>
+```sql Explicit Casting
+SELECT
+    CAST(user_id AS String),
+    user_id::String,
+    toString(user_id)
+FROM users;
+```
+
+```sql Type Functions
+SELECT
+    toUInt64('12345'),
+    toFloat64('3.14'),
+    toDate('2024-01-15'),
+    toDateTime('2024-01-15 10:30:00')
+```
+</CodeGroup>
+
+## Best Practices
+
+<Tip>
+- Choose the smallest integer type that fits your data range
+- Use Decimal for financial calculations, not Float
+- Use LowCardinality for string columns with low cardinality
+- Prefer non-Nullable types when possible for better performance
+- Use DateTime64 for high-precision timestamps
+- Consider FixedString for constant-length binary data
+- Use appropriate date partitioning for time-series data
+</Tip>
+
+## Reference
+
+See also:
+- [CREATE TABLE](/sql/statements)
+- [SELECT Queries](/sql/select)
+- [Type Conversion Functions](/functions/type-conversion)

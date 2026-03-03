@@ -1,0 +1,444 @@
+---
+title: Materialized Database Engines
+description: Connect ClickHouse to MySQL and PostgreSQL databases for real-time access and data replication
+---
+
+# Materialized Database Engines
+
+ClickHouse provides database engines that connect to external database systems, allowing you to query external data directly or replicate it into ClickHouse for analytics.
+
+## MySQL Database Engine
+
+The MySQL engine maps a remote MySQL database to ClickHouse, automatically discovering tables and reflecting schema changes in real-time.
+
+### Creating a MySQL Database
+
+**Basic Syntax**:
+```sql
+CREATE DATABASE mysql_db
+ENGINE = MySQL(
+    'host:port',
+    'database_name',
+    'username',
+    'password'
+)
+[SETTINGS ...]
+```
+
+**Parameters**:
+- `host:port`: MySQL server address and port
+- `database_name`: Name of the database in MySQL
+- `username`: MySQL username
+- `password`: MySQL password
+
+### Examples
+
+**Connect to MySQL database**:
+```sql
+CREATE DATABASE mysql_db
+ENGINE = MySQL('mysql-server.example.com:3306', 'production_db', 'clickhouse_user', 'password');
+```
+
+**Using named collection**:
+```sql
+CREATE DATABASE mysql_db
+ENGINE = MySQL(mysql_connection);
+```
+
+Where `mysql_connection` is defined in `config.xml`:
+
+```xml
+<named_collections>
+    <mysql_connection>
+        <host>mysql-server.example.com</host>
+        <port>3306</port>
+        <user>clickhouse_user</user>
+        <password>password</password>
+        <database>production_db</database>
+    </mysql_connection>
+</named_collections>
+```
+
+**With settings**:
+```sql
+CREATE DATABASE mysql_db
+ENGINE = MySQL('mysql-server:3306', 'mydb', 'user', 'pass')
+SETTINGS 
+    mysql_datatypes_support_level = 'decimal,datetime64';
+```
+
+### MySQL Database Settings
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `mysql_datatypes_support_level` | String | Controls MySQL type conversion ("decimal", "datetime64", or combinations) |
+
+### Querying MySQL Tables
+
+Once created, MySQL tables appear as ClickHouse tables:
+
+```sql
+-- List tables from MySQL database
+SHOW TABLES FROM mysql_db;
+
+-- Query MySQL table directly
+SELECT * FROM mysql_db.users WHERE created_at > '2024-01-01';
+
+-- Join with local ClickHouse table
+SELECT 
+    u.id,
+    u.name,
+    count() as event_count
+FROM mysql_db.users u
+JOIN local_db.events e ON e.user_id = u.id
+GROUP BY u.id, u.name;
+```
+
+### MySQL Schema Updates
+
+The MySQL engine automatically detects schema changes:
+
+- New tables appear in ClickHouse automatically
+- Dropped tables disappear from ClickHouse
+- Column additions/removals are reflected
+- Schema updates happen periodically (every 30 seconds by default)
+
+### Implementation Details
+
+The `DatabaseMySQL` class (src/Databases/MySQL/DatabaseMySQL.h:35):
+
+```cpp
+class DatabaseMySQL final : public DatabaseWithAltersOnDiskBase, WithContext
+{
+public:
+    String getEngineName() const override { return "MySQL"; }
+    
+    // Real-time access to table structure from remote MySQL
+    // All tables created after pull-out structure from remote MySQL
+};
+```
+
+**Key Features**:
+- Uses connection pooling via `mysqlxx::PoolWithFailover`
+- Caches table structures locally (src/Databases/MySQL/DatabaseMySQL.h:104)
+- Background thread fetches table metadata periodically
+
+## PostgreSQL Database Engine
+
+The PostgreSQL engine provides real-time access to PostgreSQL tables, similar to the MySQL engine.
+
+### Creating a PostgreSQL Database
+
+**Basic Syntax**:
+```sql
+CREATE DATABASE postgres_db
+ENGINE = PostgreSQL(
+    'host:port',
+    'database_name',
+    'username',
+    'password'
+    [, 'schema_name']
+    [, use_table_cache]
+);
+```
+
+**Parameters**:
+- `host:port`: PostgreSQL server address and port
+- `database_name`: Database name in PostgreSQL
+- `username`: PostgreSQL username  
+- `password`: PostgreSQL password
+- `schema_name`: Schema name (default: 'public')
+- `use_table_cache`: Cache table structure (0 or 1, default: 0)
+
+### Examples
+
+**Connect to PostgreSQL**:
+```sql
+CREATE DATABASE postgres_db
+ENGINE = PostgreSQL('postgres-server:5432', 'analytics', 'clickhouse', 'password');
+```
+
+**With specific schema**:
+```sql
+CREATE DATABASE postgres_db
+ENGINE = PostgreSQL('postgres-server:5432', 'mydb', 'user', 'pass', 'public');
+```
+
+**With table caching**:
+```sql
+CREATE DATABASE postgres_db
+ENGINE = PostgreSQL('postgres-server:5432', 'mydb', 'user', 'pass', 'public', 1);
+```
+
+### PostgreSQL Schema Updates
+
+Behavior depends on the `use_table_cache` parameter:
+
+- **`use_table_cache = 0` (default)**: Schema checked on every query, slower but always current
+- **`use_table_cache = 1`**: Schema cached, faster but requires DETACH/ATTACH to refresh
+
+### Implementation Details
+
+The `DatabasePostgreSQL` class (src/Databases/PostgreSQL/DatabasePostgreSQL.h:24):
+
+```cpp
+class DatabasePostgreSQL final : public DatabaseWithAltersOnDiskBase, WithContext
+{
+public:
+    String getEngineName() const override { return "PostgreSQL"; }
+    
+    // Real-time access to table structure from remote PostgreSQL
+    // If cache_tables == 0, structure checked on every query
+};
+```
+
+## MaterializedPostgreSQL Database Engine
+
+The MaterializedPostgreSQL engine replicates PostgreSQL data to ClickHouse using PostgreSQL's logical replication, enabling real-time analytics on OLTP data.
+
+### Features
+
+- **Automatic Data Replication**: Uses PostgreSQL logical replication to sync data
+- **Real-time Updates**: Changes in PostgreSQL are streamed to ClickHouse
+- **Local Storage**: Data stored in ClickHouse tables (based on Atomic engine)
+- **Initial Snapshot**: Full table snapshot on first sync
+- **Incremental Updates**: Only changed data replicated after initial load
+
+### Prerequisites
+
+**PostgreSQL Configuration**:
+
+Add to `postgresql.conf`:
+```ini
+wal_level = logical
+max_replication_slots = 10
+max_wal_senders = 10
+```
+
+Restart PostgreSQL after changes.
+
+**Create Replication User**:
+```sql
+CREATE USER clickhouse_replication WITH REPLICATION PASSWORD 'password';
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO clickhouse_replication;
+```
+
+### Creating a MaterializedPostgreSQL Database
+
+**Basic Syntax**:
+```sql
+CREATE DATABASE postgres_mat
+ENGINE = MaterializedPostgreSQL(
+    'host:port',
+    'database_name',
+    'username',
+    'password'
+)
+[SETTINGS ...]
+```
+
+### Examples
+
+**Basic replication**:
+```sql
+CREATE DATABASE postgres_mat
+ENGINE = MaterializedPostgreSQL(
+    'postgres-server:5432',
+    'production',
+    'clickhouse_replication',
+    'password'
+);
+```
+
+**With settings**:
+```sql
+CREATE DATABASE postgres_mat
+ENGINE = MaterializedPostgreSQL(
+    'postgres-server:5432',
+    'production',
+    'clickhouse_replication',
+    'password'
+)
+SETTINGS 
+    materialized_postgresql_tables_list = 'users,orders,products',
+    materialized_postgresql_schema = 'public';
+```
+
+**Using named collection**:
+```sql
+CREATE DATABASE postgres_mat
+ENGINE = MaterializedPostgreSQL(postgres_replication);
+```
+
+### MaterializedPostgreSQL Settings
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `materialized_postgresql_tables_list` | String | Comma-separated list of tables to replicate (empty = all tables) |
+| `materialized_postgresql_schema` | String | PostgreSQL schema to replicate (default: 'public') |
+| `materialized_postgresql_replication_slot` | String | Custom replication slot name |
+| `materialized_postgresql_snapshot` | String | Use specific snapshot for initial load |
+| `materialized_postgresql_max_block_size` | UInt64 | Max block size for reading from PostgreSQL |
+| `materialized_postgresql_use_unique_replication_consumer_identifier` | Bool | Use unique consumer ID |
+
+### How It Works
+
+1. **Initial Snapshot**: Full table data copied from PostgreSQL
+2. **Replication Slot**: Created in PostgreSQL to track changes
+3. **Change Streaming**: PostgreSQL WAL changes streamed to ClickHouse
+4. **Table Updates**: Changes applied to ClickHouse tables in real-time
+
+### Querying Replicated Data
+
+```sql
+-- Tables are materialized as regular ClickHouse tables
+SELECT * FROM postgres_mat.users;
+
+-- Use ClickHouse features on replicated data
+SELECT 
+    toStartOfMonth(created_at) as month,
+    count() as user_count
+FROM postgres_mat.users
+GROUP BY month
+ORDER BY month;
+```
+
+### Managing Replication
+
+**Check replication status**:
+```sql
+SELECT * FROM system.database_replicas 
+WHERE database = 'postgres_mat';
+```
+
+**Stop replication**:
+```sql
+SYSTEM STOP REPLICATION postgres_mat;
+```
+
+**Resume replication**:
+```sql
+SYSTEM START REPLICATION postgres_mat;
+```
+
+**Restart replication** (re-snapshot):
+```sql
+SYSTEM RESTART REPLICA postgres_mat;
+```
+
+### Implementation Details
+
+The `DatabaseMaterializedPostgreSQL` class (src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.h:27) extends `DatabaseAtomic`:
+
+```cpp
+class DatabaseMaterializedPostgreSQL : public DatabaseAtomic
+{
+public:
+    String getEngineName() const override { return "MaterializedPostgreSQL"; }
+    
+    bool hasReplicationThread() const override { return true; }
+    void stopReplication() override;
+};
+```
+
+**Key Components**:
+- **PostgreSQLReplicationHandler**: Manages replication from PostgreSQL (src/Databases/PostgreSQL/DatabaseMaterializedPostgreSQL.h:92)
+- **Atomic Storage**: Uses Atomic engine's UUID-based storage
+- **Background Sync**: Async task continuously processes replication stream
+
+### Table Engine Mapping
+
+PostgreSQL tables are converted to ClickHouse tables:
+
+| PostgreSQL | ClickHouse |
+|------------|------------|
+| Regular table | ReplacingMergeTree (for updates) |
+| Primary key | ORDER BY clause |
+| Indexes | Ignored (use ClickHouse indexes) |
+
+## Comparison: MySQL vs PostgreSQL vs MaterializedPostgreSQL
+
+| Feature | MySQL | PostgreSQL | MaterializedPostgreSQL |
+|---------|-------|------------|------------------------|
+| Data Location | Remote | Remote | Local (replicated) |
+| Query Performance | Slow (network) | Slow (network) | Fast (local) |
+| Schema Updates | Automatic | Automatic (or cached) | Manual (recreate DB) |
+| Data Updates | Real-time | Real-time | Real-time (streamed) |
+| Storage | MySQL server | PostgreSQL server | ClickHouse |
+| Use Case | Occasional queries | Occasional queries | Analytics workloads |
+| Requires Replication | No | No | Yes (logical replication) |
+
+## Best Practices
+
+### For MySQL/PostgreSQL Engines
+
+1. **Use for occasional queries** - Don't run heavy analytics on remote tables
+2. **Create materialized views** - Cache frequently queried data locally
+3. **Filter early** - Push down WHERE clauses to reduce network transfer
+4. **Monitor connection pool** - Ensure sufficient connections configured
+
+### For MaterializedPostgreSQL Engine
+
+1. **Select tables carefully** - Replicate only needed tables to save storage
+2. **Monitor replication lag** - Check `system.database_replicas` regularly
+3. **Plan for initial load** - Large tables take time for initial snapshot
+4. **Configure retention** - PostgreSQL must keep WAL until ClickHouse processes it
+5. **Use ReplacingMergeTree optimization** - Run `OPTIMIZE TABLE FINAL` periodically
+
+## Troubleshooting
+
+### MySQL Connection Issues
+
+```sql
+-- Test connection
+SELECT * FROM mysql_db.table LIMIT 1;
+
+-- Check error log
+SELECT * FROM system.query_log 
+WHERE query LIKE '%mysql_db%' AND exception != '';
+```
+
+### PostgreSQL Replication Not Working
+
+Check PostgreSQL replication slots:
+```sql
+-- On PostgreSQL
+SELECT * FROM pg_replication_slots;
+```
+
+Check ClickHouse replication:
+```sql
+-- On ClickHouse
+SELECT * FROM system.database_replicas WHERE database = 'postgres_mat';
+```
+
+### High Replication Lag
+
+1. Check network bandwidth between PostgreSQL and ClickHouse
+2. Verify PostgreSQL WAL retention settings
+3. Monitor ClickHouse server load
+4. Consider filtering replicated tables
+
+## Limitations
+
+### MySQL Engine
+- **Performance**: All queries execute on MySQL server
+- **Data types**: Some MySQL types may not map perfectly to ClickHouse
+- **Transactions**: No transaction support in ClickHouse side
+
+### PostgreSQL Engine  
+- **Schema caching**: Trade-off between performance and freshness
+- **Large result sets**: Can cause memory issues
+
+### MaterializedPostgreSQL Engine
+- **PostgreSQL version**: Requires PostgreSQL 11+
+- **Replication slots**: Limited by `max_replication_slots`
+- **DDL changes**: Schema changes require database recreation
+- **Deletes**: Handled via ReplacingMergeTree, may need OPTIMIZE
+
+## See Also
+
+- [Database Engines Overview](/databases/overview)
+- [Atomic Database Engine](/databases/atomic)
+- [Integration with MySQL](/integration/mysql)
+- [Integration with PostgreSQL](/integration/postgresql)

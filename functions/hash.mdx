@@ -1,0 +1,412 @@
+---
+title: Hash Functions
+description: Hash functions for generating checksums, fingerprints, and distributed data partitioning in ClickHouse
+---
+
+ClickHouse provides a comprehensive set of hash functions for generating checksums, creating unique identifiers, data fingerprinting, and consistent hashing for distributed systems.
+
+## General Purpose Hash Functions
+
+### cityHash64
+
+Fast non-cryptographic hash function producing 64-bit values.
+
+```sql
+SELECT cityHash64('Hello World');
+-- Result: 8782161227627181556
+
+SELECT cityHash64(12345);
+-- Result: 5568347715107589135
+
+SELECT cityHash64('user@example.com');
+-- Consistent hash for same input
+```
+
+### sipHash64
+
+Fast cryptographically strong 64-bit hash function.
+
+```sql
+SELECT sipHash64('password123');
+-- Result: 17365713863840300322
+
+SELECT sipHash64('user', 'session', 'id');
+-- Combines multiple arguments
+```
+
+### sipHash128
+
+128-bit version of sipHash.
+
+```sql
+SELECT sipHash128('data');
+-- Result: 128-bit hash as FixedString(16)
+
+SELECT hex(sipHash128('sensitive data'));
+-- View as hex string
+```
+
+## MurmurHash Family
+
+Fast non-cryptographic hash functions with good distribution.
+
+### murmurHash2_32 / murmurHash2_64
+
+```sql
+-- From test: 00678_murmurhash.sql
+SELECT murmurHash2_32(123456);
+
+SELECT murmurHash2_32(CAST(3 AS UInt8));
+
+SELECT murmurHash2_32(CAST(1.2684 AS Float32));
+
+SELECT murmurHash2_32(CAST(-154477 AS Int64));
+
+SELECT murmurHash2_32('foo');
+
+SELECT murmurHash2_32(CAST('bar' AS FixedString(3)));
+
+SELECT murmurHash2_64('foo');
+SELECT murmurHash2_64('\x01');
+SELECT murmurHash2_64(1);
+```
+
+### murmurHash3_32 / murmurHash3_64
+
+```sql
+SELECT murmurHash3_32('foo');
+SELECT murmurHash3_32('\x01');
+SELECT murmurHash3_32(1);
+
+SELECT murmurHash3_64('foo');
+SELECT murmurHash3_64('\x01');
+SELECT murmurHash3_64(1);
+```
+
+### murmurHash3_128
+
+128-bit MurmurHash3.
+
+```sql
+SELECT hex(murmurHash3_128('foo'));
+-- Returns 128-bit hash as hex string
+
+SELECT hex(murmurHash3_128('\x01'));
+```
+
+### gccMurmurHash
+
+GCC implementation of MurmurHash.
+
+```sql
+SELECT gccMurmurHash('foo');
+SELECT gccMurmurHash('\x01');
+SELECT gccMurmurHash(1);
+```
+
+## xxHash Family
+
+Extremely fast non-cryptographic hash functions.
+
+### xxHash32 / xxHash64
+
+```sql
+SELECT xxHash32('ClickHouse');
+-- Result: 32-bit hash
+
+SELECT xxHash64('ClickHouse');
+-- Result: 64-bit hash
+
+SELECT xxHash64(12345, 'user', toDate('2023-01-01'));
+-- Combine multiple values
+```
+
+## Cryptographic Hash Functions
+
+### MD5
+
+Produces 128-bit MD5 hash (not recommended for security).
+
+```sql
+SELECT MD5('password');
+-- Result: FixedString(16)
+
+SELECT hex(MD5('password'));
+-- Result: '5f4dcc3b5aa765d61d8327deb882cf99'
+
+SELECT lower(hex(MD5('hello world')));
+-- Result: '5eb63bbbe01eeed093cb22bb8f5acdc3'
+```
+
+### SHA1
+
+Produces 160-bit SHA-1 hash.
+
+```sql
+SELECT SHA1('data');
+-- Result: FixedString(20)
+
+SELECT hex(SHA1('data'));
+-- Result: 40 character hex string
+```
+
+### SHA224 / SHA256
+
+SHA-2 family hash functions.
+
+```sql
+SELECT SHA224('secure data');
+-- Result: FixedString(28)
+
+SELECT hex(SHA256('secure data'));
+-- Result: 64 character hex string
+
+SELECT SHA256('password123');
+```
+
+### SHA384 / SHA512
+
+Stronger SHA-2 variants.
+
+```sql
+SELECT hex(SHA384('data'));
+-- Result: 96 character hex string
+
+SELECT hex(SHA512('data'));
+-- Result: 128 character hex string
+```
+
+### SHA512_256
+
+SHA-512/256 variant (truncated SHA-512).
+
+```sql
+SELECT hex(SHA512_256('data'));
+-- Result: 64 character hex string
+```
+
+## BLAKE Hash Functions
+
+### BLAKE3
+
+Modern cryptographic hash function, very fast.
+
+```sql
+SELECT BLAKE3('ClickHouse');
+-- Result: FixedString(32)
+
+SELECT hex(BLAKE3('data'));
+-- 256-bit hash as hex
+```
+
+## Consistent Hashing Functions
+
+Used for distributed data partitioning.
+
+### jumpConsistentHash
+
+Jump consistent hash for distributing data across buckets.
+
+```sql
+SELECT jumpConsistentHash(12345, 10);
+-- Assigns value to one of 10 buckets
+-- Result: 0-9
+
+SELECT 
+    user_id,
+    jumpConsistentHash(cityHash64(user_id), 4) as shard
+FROM users;
+-- Distribute users across 4 shards
+```
+
+### kostikConsistentHash
+
+Another consistent hashing algorithm.
+
+```sql
+SELECT kostikConsistentHash(123456789, 100);
+-- Maps to bucket 0-99
+```
+
+## String Hash Functions
+
+### stringHash32 / stringHash64
+
+Specialized hash for strings.
+
+```sql
+SELECT stringHash32('example');
+SELECT stringHash64('example');
+```
+
+## Integer Hash Functions
+
+### intHash32 / intHash64
+
+Hashes integer values.
+
+```sql
+SELECT intHash32(12345);
+-- Fast integer hashing
+
+SELECT intHash64(123456789);
+```
+
+## Half MD5 Hash
+
+### halfMD5
+
+Returns first 64 bits of MD5 hash.
+
+```sql
+SELECT halfMD5('data');
+-- Result: UInt64
+
+SELECT halfMD5('user@example.com');
+-- Faster than full MD5, sufficient for many use cases
+```
+
+## URL Hash
+
+### URLHash
+
+Specialized hash for URLs with normalization.
+
+```sql
+SELECT URLHash('https://example.com/path?query=value');
+-- Consistent hash for similar URLs
+```
+
+## Hashing Multiple Values
+
+Most hash functions accept multiple arguments:
+
+```sql
+-- Hash combination of values
+SELECT cityHash64(user_id, session_id, timestamp);
+
+-- Create composite key
+SELECT sipHash64(country, city, postal_code);
+
+-- Hash entire row
+SELECT cityHash64(*) FROM table;
+```
+
+## Use Cases
+
+### Data Deduplication
+
+```sql
+-- Find duplicate records
+SELECT 
+    cityHash64(*) as row_hash,
+    count() as cnt
+FROM events
+GROUP BY row_hash
+HAVING cnt > 1;
+
+-- Deduplicate on insert
+CREATE TABLE unique_events
+ENGINE = ReplacingMergeTree
+ORDER BY cityHash64(user_id, event_type, timestamp);
+```
+
+### Sharding / Partitioning
+
+```sql
+-- Distribute data across shards
+SELECT 
+    user_id,
+    jumpConsistentHash(cityHash64(user_id), 16) as shard_id
+FROM users;
+
+-- Partition by hash
+CREATE TABLE events
+(
+    event_id UUID,
+    user_id UInt64,
+    data String
+)
+ENGINE = MergeTree
+PARTITION BY intDiv(cityHash64(user_id), 1000000000000)
+ORDER BY event_id;
+```
+
+### Anonymization
+
+```sql
+-- Hash sensitive data
+SELECT 
+    lower(hex(SHA256(email))) as email_hash,
+    lower(hex(SHA256(phone))) as phone_hash
+FROM users;
+
+-- Create pseudonymous identifiers
+SELECT 
+    lower(hex(SHA256(concat(user_id, 'salt123')))) as anonymous_id
+FROM users;
+```
+
+### Sampling
+
+```sql
+-- Consistent 10% sample
+SELECT * FROM large_table
+WHERE cityHash64(id) % 10 = 0;
+
+-- Stratified sampling
+SELECT * FROM users
+WHERE cityHash64(user_id, current_date()) % 100 < 5;
+-- 5% daily sample, consistent within day
+```
+
+### Checksums
+
+```sql
+-- Verify data integrity
+SELECT 
+    table_name,
+    cityHash64(groupArray(*)) as table_checksum
+FROM system.parts
+GROUP BY table_name;
+
+-- Row checksums for change detection
+ALTER TABLE events
+ADD COLUMN row_hash UInt64 DEFAULT cityHash64(*);
+```
+
+## Performance Characteristics
+
+| Function | Speed | Security | Collision Resistance | Use Case |
+|----------|-------|----------|---------------------|----------|
+| `cityHash64` | Very Fast | None | Good | General hashing, partitioning |
+| `sipHash64` | Fast | Strong | Excellent | Hash tables, preventing DoS |
+| `murmurHash3` | Very Fast | None | Good | Hash tables, bloom filters |
+| `xxHash64` | Extremely Fast | None | Good | Checksums, non-crypto use |
+| `MD5` | Moderate | Weak | Poor | Legacy compatibility only |
+| `SHA256` | Slow | Strong | Excellent | Cryptographic needs |
+| `BLAKE3` | Fast | Strong | Excellent | Modern crypto applications |
+
+## Choosing the Right Hash Function
+
+1. **For sharding/partitioning**: Use `cityHash64` or `jumpConsistentHash`
+2. **For deduplication**: Use `cityHash64` or `sipHash64`
+3. **For security/passwords**: Use `SHA256`, `SHA512`, or `BLAKE3`
+4. **For checksums**: Use `xxHash64` or `cityHash64`
+5. **For hash tables**: Use `sipHash64` (DoS resistant)
+6. **For consistent hashing**: Use `jumpConsistentHash`
+
+## Performance Tips
+
+1. **Non-cryptographic hashes are much faster** - use them unless security is required
+2. **cityHash64 is the default** for most ClickHouse internal operations
+3. **Cache hash values** in materialized columns for frequently used hashes
+4. **Use integer hashes** when input is already numeric
+5. **Avoid MD5/SHA1** for new applications - use SHA256+ or BLAKE3
+
+## See Also
+
+- [Encryption Functions](https://clickhouse.com/docs/en/sql-reference/functions/encryption-functions)
+- [Type Conversion Functions](/functions/type-conversion)
+- [String Functions](/functions/string)
+- [Random Functions](https://clickhouse.com/docs/en/sql-reference/functions/random-functions)

@@ -1,0 +1,303 @@
+---
+title: Server Settings
+description: Comprehensive guide to ClickHouse server settings and parameters
+---
+
+ClickHouse server settings control various aspects of server behavior, performance, and resource management. Settings can be configured at the server level or overridden at the user, profile, or query level.
+
+## Setting Types
+
+ClickHouse has three categories of settings:
+
+1. **Server settings** - Global server configuration (in `config.xml`)
+2. **User settings** - Per-user or per-profile settings (in `users.xml`)
+3. **Query settings** - Runtime settings for individual queries
+
+## Core Server Settings
+
+### Concurrent Query Execution
+
+```xml
+<clickhouse>
+    <!-- Maximum number of simultaneously executing queries -->
+    <max_concurrent_queries>1000</max_concurrent_queries>
+    
+    <!-- Thread scheduling -->
+    <concurrent_threads_soft_limit_num>0</concurrent_threads_soft_limit_num>
+    <concurrent_threads_soft_limit_ratio_to_cores>2</concurrent_threads_soft_limit_ratio_to_cores>
+    <concurrent_threads_scheduler>max_min_fair</concurrent_threads_scheduler>
+</clickhouse>
+```
+
+### Memory Management
+
+```xml
+<clickhouse>
+    <!-- Maximum memory usage for server (0 = automatic based on RAM) -->
+    <max_server_memory_usage>0</max_server_memory_usage>
+    
+    <!-- Maximum ratio of server memory to total RAM -->
+    <max_server_memory_usage_to_ram_ratio>0.9</max_server_memory_usage_to_ram_ratio>
+    
+    <!-- Memory profiler step size in bytes -->
+    <total_memory_profiler_step>4194304</total_memory_profiler_step>
+    
+    <!-- Probability for memory sampling -->
+    <total_memory_tracker_sample_probability>0</total_memory_tracker_sample_probability>
+</clickhouse>
+```
+
+### Thread Pools
+
+```xml
+<clickhouse>
+    <!-- Global thread pool size -->
+    <max_thread_pool_size>10000</max_thread_pool_size>
+    
+    <!-- Background operations -->
+    <background_pool_size>16</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+    <background_move_pool_size>8</background_move_pool_size>
+    <background_fetches_pool_size>8</background_fetches_pool_size>
+    <background_common_pool_size>8</background_common_pool_size>
+    <background_schedule_pool_size>128</background_schedule_pool_size>
+    
+    <!-- Distributed query pool -->
+    <background_distributed_schedule_pool_size>16</background_distributed_schedule_pool_size>
+    
+    <!-- Message broker pool -->
+    <background_message_broker_schedule_pool_size>16</background_message_broker_schedule_pool_size>
+</clickhouse>
+```
+
+### Cache Settings
+
+```xml
+<clickhouse>
+    <!-- Uncompressed data cache (for MergeTree tables) -->
+    <uncompressed_cache_size>8589934592</uncompressed_cache_size>
+    
+    <!-- Mark cache for MergeTree tables -->
+    <mark_cache_size>5368709120</mark_cache_size>
+    
+    <!-- Secondary index mark cache -->
+    <index_mark_cache_size>5368709120</index_mark_cache_size>
+    
+    <!-- Memory mapped file cache -->
+    <mmap_cache_size>1024</mmap_cache_size>
+    
+    <!-- Compiled expression cache -->
+    <compiled_expression_cache_size>134217728</compiled_expression_cache_size>
+    <compiled_expression_cache_elements_size>10000</compiled_expression_cache_elements_size>
+    
+    <!-- Query condition cache -->
+    <query_condition_cache_size>106700800</query_condition_cache_size>
+    
+    <!-- Query result cache -->
+    <query_cache>
+        <max_size_in_bytes>1073741824</max_size_in_bytes>
+        <max_entries>1024</max_entries>
+        <max_entry_size_in_bytes>1048576</max_entry_size_in_bytes>
+        <max_entry_size_in_rows>30000000</max_entry_size_in_rows>
+    </query_cache>
+</clickhouse>
+```
+
+### Network and Connection Settings
+
+```xml
+<clickhouse>
+    <!-- HTTP keep-alive timeout -->
+    <keep_alive_timeout>10</keep_alive_timeout>
+    
+    <!-- Maximum connections -->
+    <max_connections>4096</max_connections>
+    
+    <!-- Listen backlog -->
+    <listen_backlog>4096</listen_backlog>
+    
+    <!-- Validate TCP client information -->
+    <validate_tcp_client_information>false</validate_tcp_client_information>
+</clickhouse>
+```
+
+### Async Database Loading
+
+```xml
+<clickhouse>
+    <!-- Load databases asynchronously on startup -->
+    <async_load_databases>true</async_load_databases>
+    
+    <!-- Table loader pool sizes -->
+    <tables_loader_foreground_pool_size>0</tables_loader_foreground_pool_size>
+    <tables_loader_background_pool_size>0</tables_loader_background_pool_size>
+</clickhouse>
+```
+
+## User and Profile Settings
+
+Settings in `users.xml` define default behaviors for users and profiles:
+
+### Default Profile
+
+```xml
+<clickhouse>
+    <profiles>
+        <default>
+            <!-- Maximum memory per query -->
+            <max_memory_usage>10000000000</max_memory_usage>
+            
+            <!-- Use query cache -->
+            <use_query_cache>0</use_query_cache>
+            
+            <!-- Enable async inserts -->
+            <async_insert>0</async_insert>
+            
+            <!-- Load balancing for distributed queries -->
+            <load_balancing>random</load_balancing>
+        </default>
+        
+        <!-- Read-only profile -->
+        <readonly>
+            <readonly>1</readonly>
+        </readonly>
+    </profiles>
+</clickhouse>
+```
+
+### Common Query Settings
+
+| Setting | Description | Default |
+|---------|-------------|----------|
+| `max_memory_usage` | Maximum memory per query (bytes) | 10000000000 |
+| `max_execution_time` | Maximum query execution time (seconds) | 0 (unlimited) |
+| `max_rows_to_read` | Maximum rows to read | 0 (unlimited) |
+| `max_bytes_to_read` | Maximum bytes to read | 0 (unlimited) |
+| `max_threads` | Maximum threads for query execution | Auto |
+| `readonly` | Read-only mode (0=off, 1=on, 2=on except SET) | 0 |
+
+## Password and Authentication Settings
+
+```xml
+<clickhouse>
+    <!-- Enable plaintext passwords -->
+    <allow_plaintext_password>1</allow_plaintext_password>
+    
+    <!-- Enable no password authentication -->
+    <allow_no_password>1</allow_no_password>
+    <allow_implicit_no_password>1</allow_implicit_no_password>
+    
+    <!-- Default password type: plaintext_password, sha256_password, double_sha1_password, bcrypt_password -->
+    <default_password_type>sha256_password</default_password_type>
+    
+    <!-- BCrypt work factor -->
+    <bcrypt_workfactor>12</bcrypt_workfactor>
+    
+    <!-- Password complexity requirements -->
+    <password_complexity>
+        <rule>
+            <pattern>.{12}</pattern>
+            <message>be at least 12 characters long</message>
+        </rule>
+        <rule>
+            <pattern>\p{N}</pattern>
+            <message>contain at least 1 numeric character</message>
+        </rule>
+        <rule>
+            <pattern>\p{Ll}</pattern>
+            <message>contain at least 1 lowercase character</message>
+        </rule>
+        <rule>
+            <pattern>\p{Lu}</pattern>
+            <message>contain at least 1 uppercase character</message>
+        </rule>
+    </password_complexity>
+</clickhouse>
+```
+
+<Warning>
+For production systems, always use strong password policies and disable plaintext passwords.
+</Warning>
+
+## Access Control Settings
+
+```xml
+<clickhouse>
+    <access_control_improvements>
+        <!-- Throw exception if no row policies match -->
+        <throw_on_unmatched_row_policies>false</throw_on_unmatched_row_policies>
+        
+        <!-- Allow users without row policies to read rows -->
+        <users_without_row_policies_can_read_rows>true</users_without_row_policies_can_read_rows>
+        
+        <!-- Require CLUSTER grant for ON CLUSTER queries -->
+        <on_cluster_queries_require_cluster_grant>true</on_cluster_queries_require_cluster_grant>
+        
+        <!-- Require grant for system table access -->
+        <select_from_system_db_requires_grant>true</select_from_system_db_requires_grant>
+        <select_from_information_schema_requires_grant>true</select_from_information_schema_requires_grant>
+        
+        <!-- Settings constraints behavior -->
+        <settings_constraints_replace_previous>true</settings_constraints_replace_previous>
+        
+        <!-- Enable IMPERSONATE feature -->
+        <allow_impersonate_user>true</allow_impersonate_user>
+        
+        <!-- Role cache expiration -->
+        <role_cache_expiration_time_seconds>600</role_cache_expiration_time_seconds>
+    </access_control_improvements>
+</clickhouse>
+```
+
+## Runtime Settings
+
+Many settings can be changed at runtime:
+
+```sql
+-- Set for current session
+SET max_threads = 4;
+SET max_memory_usage = 20000000000;
+
+-- Set for specific query
+SELECT * FROM large_table
+SETTINGS max_threads = 8, max_memory_usage = 30000000000;
+```
+
+## Viewing Current Settings
+
+Query system tables to view settings:
+
+```sql
+-- Server settings
+SELECT * FROM system.server_settings;
+
+-- Current session settings
+SELECT * FROM system.settings;
+
+-- Settings changes
+SELECT * FROM system.settings WHERE changed;
+```
+
+## Custom Settings
+
+```xml
+<clickhouse>
+    <!-- Prefixes for custom settings -->
+    <custom_settings_prefixes>SQL_,custom_</custom_settings_prefixes>
+</clickhouse>
+```
+
+This allows using custom settings with specified prefixes:
+
+```sql
+SET custom_my_setting = 'value';
+```
+
+## Best Practices
+
+1. **Start conservative** - Begin with default settings and adjust based on monitoring
+2. **Monitor memory** - Watch `system.metrics` and `system.asynchronous_metrics` for memory usage
+3. **Profile queries** - Use query profiling to identify bottlenecks before adjusting settings
+4. **Test thoroughly** - Test setting changes in non-production environments first
+5. **Document changes** - Keep a record of why specific settings were changed
+6. **Use profiles** - Group related settings into profiles for easier management

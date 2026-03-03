@@ -1,0 +1,272 @@
+---
+title: Atomic Database Engine
+description: Learn about ClickHouse's default Atomic database engine with UUID-based storage and atomic DDL operations
+---
+
+# Atomic Database Engine
+
+Atomic is the default database engine in ClickHouse since version 20.7. It provides atomic DDL operations, UUID-based table storage, and safe rename/drop operations without blocking queries.
+
+## Key Features
+
+### UUID-Based Storage
+
+All tables in an Atomic database have persistent UUIDs and store data in:
+
+```
+/clickhouse_path/store/xxx/xxxyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy/
+```
+
+Where `xxxyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy` is the table's UUID. This enables:
+
+- **Safe Renames**: Table data never moves during RENAME operations
+- **Table Access by UUID**: Tables can be accessed through the DatabaseCatalog using their UUID
+- **Concurrent Operations**: RENAME and DROP work without IStorage-level locks
+
+### Atomic DDL Operations
+
+DDL operations in Atomic databases are atomic, meaning they either complete fully or not at all. This prevents partial state during:
+
+- CREATE TABLE
+- DROP TABLE
+- RENAME TABLE
+- ALTER TABLE structure changes
+
+### Safe DROP TABLE
+
+When you drop a table:
+
+1. Metadata is moved to `/clickhouse_path/metadata_dropped/`
+2. DatabaseCatalog is notified that the table is dropped
+3. Running queries can still access the dropped table
+4. Table is actually removed when no longer in use
+
+This ensures no query fails with "table doesn't exist" errors due to concurrent drops.
+
+## Creating an Atomic Database
+
+### Basic Syntax
+
+```sql
+CREATE DATABASE my_database ENGINE = Atomic;
+```
+
+Since Atomic is the default, you can omit the ENGINE clause:
+
+```sql
+CREATE DATABASE my_database;
+```
+
+### With UUID
+
+You can specify a UUID when creating the database (useful for ATTACH):
+
+```sql
+CREATE DATABASE my_database 
+UUID '12345678-1234-1234-1234-123456789abc'
+ENGINE = Atomic;
+```
+
+### With Custom Metadata Disk
+
+Store metadata on a specific disk:
+
+```sql
+CREATE DATABASE my_database
+ENGINE = Atomic
+SETTINGS disk = 'metadata_disk';
+```
+
+## Configuration
+
+### Database Settings
+
+Atomic databases support the following settings:
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `disk` | String | Disk name for storing database metadata (default: uses server's default disk) |
+
+### Server Configuration
+
+The Atomic engine uses paths configured in `config.xml`:
+
+```xml
+<clickhouse>
+    <path>/var/lib/clickhouse/</path>
+</clickhouse>
+```
+
+Table data is stored in:
+- **Data**: `{path}/store/{uuid}/`
+- **Metadata**: `{path}/metadata/{database}/`
+- **Dropped metadata**: `{path}/metadata_dropped/`
+
+## Operations
+
+### Creating Tables
+
+Tables are automatically assigned UUIDs:
+
+```sql
+CREATE DATABASE mydb ENGINE = Atomic;
+
+CREATE TABLE mydb.users (
+    id UInt64,
+    name String
+) ENGINE = MergeTree
+ORDER BY id;
+
+-- Table gets a UUID automatically
+SELECT uuid FROM system.tables WHERE database = 'mydb' AND name = 'users';
+```
+
+### Renaming Tables
+
+Renames are atomic and don't move data:
+
+```sql
+-- Within same database
+RENAME TABLE mydb.users TO mydb.customers;
+
+-- Between databases (both must be Atomic)
+RENAME TABLE mydb.users TO otherdb.users;
+
+-- Exchange tables atomically
+EXCHANGE TABLES mydb.table1 AND mydb.table2;
+```
+
+### Dropping Tables
+
+Tables are marked as dropped but remain accessible to running queries:
+
+```sql
+DROP TABLE mydb.users;
+
+-- Synchronous drop (waits for table to be fully removed)
+DROP TABLE mydb.users SYNC;
+```
+
+### Attaching/Detaching Tables
+
+```sql
+-- Detach table (metadata removed but data preserved)
+DETACH TABLE mydb.users;
+
+-- Attach existing table back
+ATTACH TABLE mydb.users;
+
+-- Attach with explicit UUID
+ATTACH TABLE mydb.users UUID '12345678-1234-1234-1234-123456789abc';
+```
+
+## Implementation Details
+
+### Class Hierarchy
+
+The `DatabaseAtomic` class (src/Databases/DatabaseAtomic.h:21) inherits from `DatabaseOrdinary` and provides:
+
+```cpp
+class DatabaseAtomic : public DatabaseOrdinary
+{
+public:
+    String getEngineName() const override { return "Atomic"; }
+    UUID getUUID() const override { return db_uuid; }
+    
+    void renameTable(...) override;
+    void dropTable(...) override;
+    void attachTable(...) override;
+    StoragePtr detachTable(...) override;
+    String getTableDataPath(const String & table_name) const override;
+};
+```
+
+### Storage Structure
+
+**Table Name to Path Mapping** (src/Databases/DatabaseAtomic.h:100):
+```cpp
+NameToPathMap table_name_to_path TSA_GUARDED_BY(mutex);
+```
+
+**Detached Tables** (src/Databases/DatabaseAtomic.h:102):
+```cpp
+DetachedTables detached_tables TSA_GUARDED_BY(mutex);
+```
+
+**Symlinks**:
+- `path_to_table_symlinks`: Symlinks from table names to UUID directories
+- `path_to_metadata_symlink`: Symlink to database metadata
+
+## Differences from Ordinary Engine
+
+| Feature | Atomic | Ordinary |
+|---------|--------|----------|
+| Tables have UUIDs | Yes | No |
+| Storage location | `/store/{uuid}/` | `/data/{database}/{table}/` |
+| Atomic RENAME | Yes | No |
+| Safe concurrent DROP | Yes | No |
+| Cross-database RENAME | Yes | No (same engine only) |
+| Default engine | Since 20.7 | Before 20.7 |
+| Recommended | Yes | Deprecated |
+
+## Migration from Ordinary
+
+To migrate from Ordinary to Atomic:
+
+1. **Create new Atomic database**:
+   ```sql
+   CREATE DATABASE mydb_atomic ENGINE = Atomic;
+   ```
+
+2. **Move tables**:
+   ```sql
+   RENAME TABLE mydb_ordinary.table1 TO mydb_atomic.table1;
+   ```
+   Note: This will copy data, not move it in place.
+
+3. **Drop old database**:
+   ```sql
+   DROP DATABASE mydb_ordinary;
+   ```
+
+## Performance Considerations
+
+### Advantages
+
+- **No table locks during RENAME**: Operations don't block queries
+- **Fast DROP TABLE**: Immediate for metadata, async for data
+- **Concurrent DDL**: Multiple DDL operations can run simultaneously
+
+### Trade-offs
+
+- **UUID directory structure**: Slightly more filesystem overhead
+- **Symlink management**: Additional filesystem operations for table operations
+
+## Limitations
+
+1. **Cannot move tables to non-Atomic databases** (except during recovery for Replicated databases)
+2. **Requires filesystem with symlink support** for some features
+3. **UUID required for ATTACH operations** from backups
+
+## System Tables
+
+Query Atomic database information:
+
+```sql
+-- Database UUID
+SELECT uuid, engine FROM system.databases WHERE name = 'mydb';
+
+-- Table UUIDs
+SELECT database, name, uuid, data_paths 
+FROM system.tables 
+WHERE database = 'mydb';
+
+-- Detached tables
+SELECT * FROM system.detached_tables WHERE database = 'mydb';
+```
+
+## See Also
+
+- [Database Engines Overview](/databases/overview)
+- [Replicated Database Engine](/databases/replicated)
+- [CREATE DATABASE statement](/sql/statements)

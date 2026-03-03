@@ -1,0 +1,436 @@
+---
+title: Replicated Database Engine
+description: Set up automatic DDL replication across ClickHouse servers using the Replicated database engine with ClickHouse Keeper or ZooKeeper
+---
+
+# Replicated Database Engine
+
+The Replicated database engine provides automatic DDL replication across multiple ClickHouse servers using ClickHouse Keeper or ZooKeeper. When you execute DDL on one replica, it's automatically replicated to all other replicas in the cluster.
+
+## Key Features
+
+### Automatic DDL Replication
+
+- CREATE, DROP, RENAME, and ALTER queries are replicated automatically
+- All replicas maintain identical database schemas
+- DDL operations are executed atomically across all replicas
+- Built on top of the Atomic engine for UUID-based storage
+
+### Cluster Coordination
+
+- Uses ClickHouse Keeper or ZooKeeper for coordination
+- Supports multiple shards and replicas
+- Automatic replica discovery
+- Handles replica failures gracefully
+
+### Consistency Guarantees
+
+- Metadata consistency checks using digest verification
+- Automatic recovery from inconsistent states
+- Configurable maximum replication lag
+
+## Creating a Replicated Database
+
+### Basic Syntax
+
+```sql
+CREATE DATABASE database_name
+ENGINE = Replicated('zoo_path', 'shard_name', 'replica_name')
+[SETTINGS ...]
+```
+
+**Parameters**:
+
+- `zoo_path`: Path in ClickHouse Keeper/ZooKeeper where database metadata is stored
+- `shard_name`: Shard identifier (can use macros like `{shard}`)
+- `replica_name`: Replica identifier (can use macros like `{replica}`)
+
+### Examples
+
+**Basic setup with macros**:
+```sql
+CREATE DATABASE mydb 
+ENGINE = Replicated('/clickhouse/databases/mydb', '{shard}', '{replica}');
+```
+
+**Explicit shard and replica names**:
+```sql
+CREATE DATABASE mydb 
+ENGINE = Replicated('/clickhouse/databases/mydb', 'shard1', 'replica1');
+```
+
+**With settings**:
+```sql
+CREATE DATABASE mydb 
+ENGINE = Replicated('/clickhouse/databases/mydb', '{shard}', '{replica}')
+SETTINGS 
+    max_broken_tables_ratio = 0.5,
+    max_replication_lag_to_enqueue = 100;
+```
+
+**Using default parameters** (since ClickHouse 24.1):
+```sql
+-- Uses default_replica_path from server config
+CREATE DATABASE mydb ENGINE = Replicated;
+
+-- Specify only shard
+CREATE DATABASE mydb ENGINE = Replicated('shard1');
+```
+
+### Using Alternative ZooKeeper
+
+Specify a named ZooKeeper connection:
+
+```sql
+CREATE DATABASE mydb 
+ENGINE = Replicated('aux_zk:/clickhouse/databases/mydb', '{shard}', '{replica}');
+```
+
+Where `aux_zk` is defined in `config.xml`:
+
+```xml
+<auxiliary_zookeepers>
+    <aux_zk>
+        <node>
+            <host>keeper1</host>
+            <port>2181</port>
+        </node>
+    </aux_zk>
+</auxiliary_zookeepers>
+```
+
+## Configuration Settings
+
+### Database Settings
+
+Configure via the SETTINGS clause:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `max_broken_tables_ratio` | Float | 1.0 | Don't recover replica if ratio of broken tables exceeds this value |
+| `max_replication_lag_to_enqueue` | UInt64 | 50 | Throw exception if replication lag exceeds this value |
+| `wait_entry_commited_timeout_sec` | UInt64 | 3600 | Timeout for waiting DDL entry to be committed |
+| `collection_name` | String | "" | Named collection for cluster authentication |
+| `check_consistency` | Bool | true | Check metadata consistency and recover on mismatch |
+| `max_retries_before_automatic_recovery` | UInt64 | 10 | Max retries before marking replica as lost (0 = infinite) |
+| `logs_to_keep` | UInt64 | 1000 | Number of log entries to keep in ZooKeeper |
+| `default_replica_path` | String | "/clickhouse/databases/{uuid}" | Default ZooKeeper path template |
+| `default_replica_shard_name` | String | "{shard}" | Default shard name template |
+| `default_replica_name` | String | "{replica}" | Default replica name template |
+
+### Server Configuration
+
+Define macros in `config.xml` for shard and replica names:
+
+```xml
+<macros>
+    <shard>01</shard>
+    <replica>replica_1</replica>
+</macros>
+```
+
+Configure ClickHouse Keeper or ZooKeeper:
+
+```xml
+<zookeeper>
+    <node>
+        <host>keeper1</host>
+        <port>2181</port>
+    </node>
+    <node>
+        <host>keeper2</host>
+        <port>2181</port>
+    </node>
+    <node>
+        <host>keeper3</host>
+        <port>2181</port>
+    </node>
+</zookeeper>
+```
+
+## Operations
+
+### Executing DDL
+
+DDL queries are automatically replicated:
+
+```sql
+-- Execute on any replica
+CREATE TABLE mydb.users (
+    id UInt64,
+    name String
+) ENGINE = MergeTree
+ORDER BY id;
+
+-- Table is created on all replicas automatically
+```
+
+### Waiting for Replication
+
+Wait for all replicas to process entries:
+
+```sql
+SYSTEM SYNC DATABASE REPLICA mydb;
+
+-- With timeout
+SYSTEM SYNC DATABASE REPLICA mydb STRICT;
+```
+
+### Checking Replication Status
+
+Query the `system.database_replicas` table:
+
+```sql
+SELECT 
+    database,
+    shard,
+    replica,
+    is_readonly,
+    is_session_expired,
+    log_ptr,
+    max_log_ptr,
+    replication_lag,
+    total_replicas
+FROM system.database_replicas
+WHERE database = 'mydb';
+```
+
+### Managing Replicas
+
+**Drop a specific replica**:
+```sql
+SYSTEM DROP DATABASE REPLICA 'replica1' FROM DATABASE mydb;
+
+-- Drop replica from ZooKeeper path
+SYSTEM DROP DATABASE REPLICA 'replica1' FROM ZKPATH '/clickhouse/databases/mydb';
+```
+
+**Restore database metadata from ZooKeeper**:
+```sql
+SYSTEM RESTORE DATABASE mydb;
+```
+
+## Table Engines
+
+### Recommended: ReplicatedMergeTree
+
+For full replication (DDL + data), use `ReplicatedMergeTree` tables:
+
+```sql
+CREATE TABLE mydb.events (
+    date Date,
+    user_id UInt64,
+    action String
+)
+ENGINE = ReplicatedMergeTree
+ORDER BY (date, user_id);
+```
+
+The engine arguments (`zoo_path`, `replica_name`) are automatically inferred from the database.
+
+### Non-Replicated Tables
+
+You can create non-replicated tables, but only DDL is replicated:
+
+```sql
+CREATE TABLE mydb.local_data (
+    id UInt64,
+    value String
+)
+ENGINE = MergeTree
+ORDER BY id;
+```
+
+**Note**: Data in non-replicated tables is local to each replica.
+
+## Implementation Details
+
+### Class Structure
+
+The `DatabaseReplicated` class (src/Databases/DatabaseReplicated.h:48) extends `DatabaseAtomic`:
+
+```cpp
+class DatabaseReplicated : public DatabaseAtomic
+{
+public:
+    String getEngineName() const override { return "Replicated"; }
+    
+    bool hasReplicationThread() const override { return true; }
+    void stopReplication() override;
+    
+    BlockIO tryEnqueueReplicatedDDL(
+        const ASTPtr & query, 
+        ContextPtr query_context, 
+        QueryFlags flags, 
+        DDLGuardPtr && database_guard
+    ) override;
+};
+```
+
+### ZooKeeper Structure
+
+Data stored in ClickHouse Keeper/ZooKeeper:
+
+```
+{zoo_path}/
+├── metadata/              # Table metadata
+│   └── table_name         # CREATE TABLE statement
+├── log/                   # DDL log entries
+│   ├── log_0000000001
+│   ├── log_0000000002
+│   └── ...
+├── replicas/              # Replica information
+│   ├── shard1|replica1/
+│   │   ├── log_ptr        # Last processed log entry
+│   │   └── digest         # Metadata digest
+│   └── shard1|replica2/
+│       ├── log_ptr
+│       └── digest
+└── counter                # Log entry counter
+```
+
+### DDL Worker
+
+Each replica runs a `DatabaseReplicatedDDLWorker` (src/Databases/DatabaseReplicatedWorker.h) that:
+
+1. Watches for new log entries in ZooKeeper
+2. Executes DDL queries from the log
+3. Updates its `log_ptr` after successful execution
+4. Verifies metadata consistency using digests
+
+### Metadata Digest
+
+The database maintains a hash of all table metadata (src/Databases/DatabaseReplicated.h:271):
+
+```cpp
+UInt64 tables_metadata_digest TSA_GUARDED_BY(metadata_mutex);
+```
+
+This digest is used to detect inconsistencies and trigger automatic recovery.
+
+## Recovery and Consistency
+
+### Automatic Recovery
+
+If a replica detects inconsistent metadata:
+
+1. Replica marks itself as "lost"
+2. Downloads consistent metadata snapshot from ZooKeeper
+3. Recreates local tables to match the snapshot
+4. Resumes normal operation
+
+Triggered when:
+- Metadata digest mismatch detected
+- Replica falls too far behind (exceeds `max_replication_lag_to_enqueue`)
+- Too many broken tables (exceeds `max_broken_tables_ratio`)
+
+### Manual Recovery
+
+**Restart replica** (drops and recreates all tables):
+```sql
+SYSTEM RESTART REPLICA mydb;
+```
+
+**Restore from ZooKeeper**:
+```sql
+SYSTEM RESTORE DATABASE mydb;
+```
+
+## Cluster Setup Example
+
+### 1. Configure Keeper/ZooKeeper
+
+On all servers, add to `config.xml`:
+
+```xml
+<zookeeper>
+    <node>
+        <host>keeper1.example.com</host>
+        <port>2181</port>
+    </node>
+    <node>
+        <host>keeper2.example.com</host>
+        <port>2181</port>
+    </node>
+    <node>
+        <host>keeper3.example.com</host>
+        <port>2181</port>
+    </node>
+</zookeeper>
+
+<macros>
+    <shard>01</shard>
+    <replica>replica_1</replica> <!-- Change per server -->
+</macros>
+```
+
+### 2. Create Database on First Server
+
+```sql
+CREATE DATABASE mydb 
+ENGINE = Replicated('/clickhouse/databases/mydb', '{shard}', '{replica}');
+```
+
+### 3. Create Database on Other Servers
+
+Change the `{replica}` macro in `config.xml`, then run the same CREATE DATABASE statement.
+
+### 4. Create Replicated Tables
+
+```sql
+CREATE TABLE mydb.events (
+    timestamp DateTime,
+    user_id UInt64,
+    event_type String
+)
+ENGINE = ReplicatedMergeTree
+ORDER BY (timestamp, user_id);
+```
+
+The table is automatically created on all replicas.
+
+## Best Practices
+
+1. **Use ReplicatedMergeTree tables** for data that needs to be replicated
+2. **Set appropriate `max_broken_tables_ratio`** based on your tolerance for failures
+3. **Monitor `system.database_replicas`** for replication lag
+4. **Use macros** for shard and replica names to simplify configuration
+5. **Keep `logs_to_keep` reasonable** to avoid ZooKeeper bloat
+6. **Test recovery procedures** before production deployment
+
+## Troubleshooting
+
+### Replica is Readonly
+
+Check ZooKeeper connectivity:
+```sql
+SELECT * FROM system.zookeeper WHERE path = '/clickhouse/databases/mydb';
+```
+
+### High Replication Lag
+
+Check for slow queries or broken tables:
+```sql
+SELECT * FROM system.database_replicas WHERE replication_lag > 10;
+```
+
+### Metadata Inconsistency
+
+Force consistency check:
+```sql
+SYSTEM RESTART REPLICA mydb;
+```
+
+## Limitations
+
+1. **Requires ClickHouse Keeper or ZooKeeper** for coordination
+2. **DDL queries are sequential** (executed one at a time across cluster)
+3. **Cannot rename database** while replicas are active
+4. **All replicas must have network access** to Keeper/ZooKeeper
+
+## See Also
+
+- [Database Engines Overview](/databases/overview)
+- [Atomic Database Engine](/databases/atomic)
+- [ReplicatedMergeTree table engine](/engines/mergetree-family)
+- [ClickHouse Keeper](/tools/keeper/overview)

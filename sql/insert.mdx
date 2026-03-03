@@ -1,0 +1,372 @@
+---
+title: INSERT and INSERT SELECT
+description: Complete reference for INSERT statements including VALUES, SELECT, and FORMAT clauses
+---
+
+## Overview
+
+The INSERT statement adds data to tables. ClickHouse supports multiple insert formats optimized for bulk loading and real-time ingestion.
+
+## INSERT Syntax
+
+Basic INSERT statement structure:
+
+```sql
+INSERT INTO [db.]table [(c1, c2, c3)] VALUES ...
+INSERT INTO [db.]table [(c1, c2, c3)] FORMAT format ...
+INSERT INTO [db.]table [(c1, c2, c3)] SELECT ...
+```
+
+## INSERT VALUES
+
+Insert explicit values:
+
+<CodeGroup>
+```sql Single Row
+INSERT INTO users (user_id, username, email)
+VALUES (1, 'john_doe', 'john@example.com');
+```
+
+```sql Multiple Rows
+INSERT INTO users (user_id, username, email)
+VALUES
+    (1, 'john_doe', 'john@example.com'),
+    (2, 'jane_smith', 'jane@example.com'),
+    (3, 'bob_jones', 'bob@example.com');
+```
+
+```sql All Columns
+INSERT INTO events VALUES
+    (1, '2024-01-15 10:30:00', 'click', 'homepage'),
+    (2, '2024-01-15 10:31:00', 'view', 'products');
+```
+</CodeGroup>
+
+### Column Specification
+
+<ParamField path="column_list" type="optional">
+  List of columns to insert. When omitted, all columns must be provided in table definition order.
+</ParamField>
+
+<CodeGroup>
+```sql Explicit Columns
+INSERT INTO users (user_id, username)
+VALUES (1, 'john_doe');
+-- email will use default value or NULL
+```
+
+```sql Reordered Columns
+INSERT INTO users (username, user_id, email)
+VALUES ('john_doe', 1, 'john@example.com');
+```
+</CodeGroup>
+
+## INSERT SELECT
+
+Insert data from a SELECT query:
+
+<CodeGroup>
+```sql Basic Insert Select
+INSERT INTO users_backup
+SELECT * FROM users
+WHERE created_at >= '2024-01-01';
+```
+
+```sql With Column Mapping
+INSERT INTO user_summary (user_id, total_orders, total_amount)
+SELECT
+    user_id,
+    count() AS total_orders,
+    sum(amount) AS total_amount
+FROM orders
+GROUP BY user_id;
+```
+
+```sql From Multiple Tables
+INSERT INTO enriched_events (user_id, username, event_type, event_time)
+SELECT
+    e.user_id,
+    u.username,
+    e.event_type,
+    e.event_time
+FROM events e
+JOIN users u ON e.user_id = u.user_id;
+```
+
+```sql With Subqueries
+INSERT INTO top_users
+SELECT user_id, username, score
+FROM users
+WHERE user_id IN (
+    SELECT user_id
+    FROM scores
+    WHERE score > 1000
+);
+```
+</CodeGroup>
+
+## INSERT FORMAT
+
+Insert data in various formats:
+
+<CodeGroup>
+```sql CSV Format
+INSERT INTO users FORMAT CSV
+1,"john_doe","john@example.com"
+2,"jane_smith","jane@example.com"
+```
+
+```sql TSV Format
+INSERT INTO users FORMAT TSV
+1\tjohn_doe\tjohn@example.com
+2\tjane_smith\tjane@example.com
+```
+
+```sql JSONEachRow Format
+INSERT INTO users FORMAT JSONEachRow
+{"user_id": 1, "username": "john_doe", "email": "john@example.com"}
+{"user_id": 2, "username": "jane_smith", "email": "jane@example.com"}
+```
+
+```sql Values Format
+INSERT INTO users FORMAT Values
+(1, 'john_doe', 'john@example.com'),
+(2, 'jane_smith', 'jane@example.com')
+```
+</CodeGroup>
+
+### Common Formats
+
+<ParamField path="CSV" type="format">
+  Comma-separated values. Use `CSVWithNames` to include header row.
+</ParamField>
+
+<ParamField path="TSV" type="format">
+  Tab-separated values. Use `TSVWithNames` for headers.
+</ParamField>
+
+<ParamField path="JSONEachRow" type="format">
+  One JSON object per line. Efficient for streaming data.
+</ParamField>
+
+<ParamField path="Parquet" type="format">
+  Apache Parquet columnar format. Efficient for bulk imports.
+</ParamField>
+
+<ParamField path="Native" type="format">
+  ClickHouse native binary format. Fastest for large datasets.
+</ParamField>
+
+## INSERT with Functions
+
+Use functions and expressions in INSERT:
+
+<CodeGroup>
+```sql With Functions
+INSERT INTO events (event_id, event_time, event_type)
+VALUES
+    (1, now(), 'click'),
+    (2, now() - INTERVAL 1 HOUR, 'view');
+```
+
+```sql With Expressions
+INSERT INTO users (user_id, username, email_hash)
+VALUES
+    (1, 'john_doe', MD5('john@example.com')),
+    (2, 'jane_smith', MD5('jane@example.com'));
+```
+
+```sql With Default Values
+INSERT INTO logs (level, message)
+VALUES
+    ('INFO', 'Application started'),
+    ('WARN', 'High memory usage');
+-- timestamp column uses DEFAULT now()
+```
+</CodeGroup>
+
+## Bulk Insert
+
+Optimized patterns for bulk data loading:
+
+<CodeGroup>
+```sql From File
+INSERT INTO users FORMAT CSV
+INFILE '/path/to/users.csv';
+```
+
+```sql Large Batch
+INSERT INTO events
+SELECT *
+FROM source_table
+SETTINGS max_insert_block_size = 1048576;
+```
+</CodeGroup>
+
+## INSERT Settings
+
+Control insert behavior with settings:
+
+```sql
+INSERT INTO users VALUES (1, 'john', 'john@example.com')
+SETTINGS
+    max_insert_block_size = 1048576,
+    insert_deduplicate = 1,
+    async_insert = 1;
+```
+
+### Common Settings
+
+<ParamField path="max_insert_block_size" type="integer" default="1048576">
+  Maximum block size for INSERT. Larger values improve performance for bulk inserts.
+</ParamField>
+
+<ParamField path="insert_deduplicate" type="boolean" default="1">
+  Enable deduplication for ReplicatedMergeTree tables.
+</ParamField>
+
+<ParamField path="async_insert" type="boolean" default="0">
+  Enable asynchronous inserts for better throughput with small batches.
+</ParamField>
+
+<ParamField path="wait_for_async_insert" type="boolean" default="1">
+  Wait for async insert to complete before returning.
+</ParamField>
+
+<ParamField path="async_insert_max_data_size" type="integer" default="1000000">
+  Maximum data size for async insert buffer.
+</ParamField>
+
+## Async Insert
+
+High-throughput insert mode:
+
+<CodeGroup>
+```sql Enable Async
+INSERT INTO events VALUES (1, now(), 'click')
+SETTINGS async_insert = 1, wait_for_async_insert = 0;
+```
+
+```sql With Timeout
+INSERT INTO logs FORMAT JSONEachRow
+{"level": "INFO", "message": "Test"}
+SETTINGS
+    async_insert = 1,
+    async_insert_busy_timeout_ms = 1000;
+```
+</CodeGroup>
+
+<Note>
+Async inserts batch small inserts together for better performance. Use for high-frequency, small inserts.
+</Note>
+
+## INSERT from Table Function
+
+Insert data from table functions:
+
+<CodeGroup>
+```sql From URL
+INSERT INTO users
+SELECT *
+FROM url('https://example.com/users.csv', 'CSV');
+```
+
+```sql From S3
+INSERT INTO events
+SELECT *
+FROM s3('https://bucket.s3.amazonaws.com/events/*.parquet', 'Parquet');
+```
+
+```sql From File
+INSERT INTO logs
+SELECT *
+FROM file('/var/log/app.log', 'JSONEachRow');
+```
+</CodeGroup>
+
+## Conditional Insert
+
+Insert only when conditions are met:
+
+```sql
+INSERT INTO new_users
+SELECT *
+FROM users
+WHERE created_at >= today()
+  AND status = 'active'
+  AND user_id NOT IN (SELECT user_id FROM new_users);
+```
+
+## Materialized View Insert
+
+Data automatically inserted into materialized views:
+
+```sql
+CREATE MATERIALIZED VIEW user_stats
+ENGINE = SummingMergeTree()
+ORDER BY user_id
+AS SELECT
+    user_id,
+    count() AS event_count
+FROM events
+GROUP BY user_id;
+
+-- Inserts to events automatically populate user_stats
+INSERT INTO events VALUES (1, 123, 'click', now());
+```
+
+## Error Handling
+
+<CodeGroup>
+```sql Ignore Errors
+INSERT INTO users FORMAT CSV
+SETTINGS input_format_allow_errors_ratio = 0.1;
+-- Allow up to 10% errors
+```
+
+```sql Skip Unknown Columns
+INSERT INTO users FORMAT JSONEachRow
+SETTINGS input_format_skip_unknown_fields = 1;
+```
+</CodeGroup>
+
+## Best Practices
+
+<Tip>
+- Batch inserts for better performance - aim for blocks of 10,000+ rows
+- Use appropriate FORMAT for your data source
+- Enable async_insert for high-frequency small inserts
+- Consider materialized views for real-time aggregations
+- Use INSERT SELECT for data transformations
+- Monitor insert performance with system.query_log
+</Tip>
+
+<Warning>
+- Avoid single-row inserts in production - batch whenever possible
+- Large INSERTs can block queries - use smaller batches or async mode
+- Watch memory usage with very large INSERT SELECT operations
+</Warning>
+
+## Examples from Tests
+
+Real examples from ClickHouse test suite:
+
+<CodeGroup>
+```sql Basic Insert
+-- From: 02000_join_on_const.sql
+INSERT INTO t1 VALUES (1), (2);
+INSERT INTO t2 VALUES (2), (3);
+```
+
+```sql With Date
+-- From: 02897_alter_partition_parameters.sql
+INSERT INTO test VALUES(toDate('2023-10-09'));
+```
+</CodeGroup>
+
+## Reference
+
+See also:
+- [SELECT Queries](/sql/select)
+- [Data Types](/sql/data-types)
+- [Table Engines](/engines/overview)

@@ -1,80 +1,271 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart Guide
+description: Get up and running with ClickHouse in under 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
+Get ClickHouse running and execute your first query in under 5 minutes.
 
-### Step 1: Set up your local environment
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+The fastest way to start is with the one-line install script:
 
-### Step 2: Deploy your changes
+<CodeGroup>
+```bash Linux/macOS/FreeBSD
+curl https://clickhouse.com/ | sh
+```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+```bash Docker
+docker run -d --name clickhouse-server \
+  --ulimit nofile=262144:262144 \
+  -p 8123:8123 -p 9000:9000 \
+  clickhouse/clickhouse-server
+```
+</CodeGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+The Docker command exposes:
+- Port `8123` for HTTP interface
+- Port `9000` for native client protocol
 </Note>
+
+## Connect to ClickHouse
+
+Once installed, connect using the ClickHouse client:
+
+<CodeGroup>
+```bash Native Install
+clickhouse-client
+```
+
+```bash Docker
+docker exec -it clickhouse-server clickhouse-client
+```
+</CodeGroup>
+
+You should see the ClickHouse prompt:
+
+```
+ClickHouse client version 26.2.1.1.
+Connecting to localhost:9000 as user default.
+Connected to ClickHouse server version 26.2.1.
+
+clickhouse-server :)
+```
+
+## Your First Query
+
+Let's start with the simplest query:
+
+```sql
+SELECT 1;
+```
+
+**Output:**
+```
+┌─1─┐
+│ 1 │
+└───┘
+```
+
+<Tip>
+ClickHouse uses the `;` character to terminate queries, just like standard SQL.
+</Tip>
+
+## Create Your First Table
+
+Create a table using the `MergeTree` engine, ClickHouse's most powerful table engine:
+
+```sql
+CREATE TABLE events (
+    event_time DateTime,
+    event_date Date,
+    user_id UInt64,
+    event_type String,
+    country String,
+    revenue Float32
+) ENGINE = MergeTree
+ORDER BY (event_date, user_id);
+```
+
+<Note>
+The `MergeTree` engine is the workhorse of ClickHouse, providing:
+- Fast inserts
+- Efficient compression
+- Primary key indexing via `ORDER BY`
+- Background data merging and optimization
+</Note>
+
+## Insert Sample Data
+
+Let's insert some sample analytics data:
+
+```sql
+INSERT INTO events VALUES
+    ('2026-03-03 10:00:00', '2026-03-03', 12345, 'page_view', 'US', 0),
+    ('2026-03-03 10:05:00', '2026-03-03', 12345, 'click', 'US', 0),
+    ('2026-03-03 10:10:00', '2026-03-03', 12345, 'purchase', 'US', 99.99),
+    ('2026-03-03 11:00:00', '2026-03-03', 67890, 'page_view', 'UK', 0),
+    ('2026-03-03 11:15:00', '2026-03-03', 67890, 'purchase', 'UK', 149.50),
+    ('2026-03-03 12:00:00', '2026-03-03', 11111, 'page_view', 'FR', 0);
+```
+
+## Run Analytical Queries
+
+Now let's run some real analytical queries:
+
+### Count Total Events
+
+```sql
+SELECT COUNT(*) FROM events;
+```
+
+**Output:**
+```
+┌─count()─┐
+│       6 │
+└─────────┘
+```
+
+### Analyze Events by Type
+
+```sql
+SELECT 
+    event_type,
+    COUNT(*) AS total_events,
+    COUNT(DISTINCT user_id) AS unique_users
+FROM events
+GROUP BY event_type
+ORDER BY total_events DESC;
+```
+
+**Output:**
+```
+┌─event_type─┬─total_events─┬─unique_users─┐
+│ page_view  │            3 │            3 │
+│ purchase   │            2 │            2 │
+│ click      │            1 │            1 │
+└────────────┴──────────────┴──────────────┘
+```
+
+### Calculate Revenue by Country
+
+```sql
+SELECT 
+    country,
+    COUNT(*) AS events,
+    SUM(revenue) AS total_revenue,
+    AVG(revenue) AS avg_revenue
+FROM events
+GROUP BY country
+ORDER BY total_revenue DESC;
+```
+
+**Output:**
+```
+┌─country─┬─events─┬─total_revenue─┬─avg_revenue─┐
+│ UK      │      2 │        149.50 │      74.750 │
+│ US      │      3 │         99.99 │      33.330 │
+│ FR      │      1 │          0.00 │       0.000 │
+└─────────┴────────┴───────────────┴─────────────┘
+```
+
+### Time-Based Analysis
+
+```sql
+SELECT 
+    toStartOfHour(event_time) AS hour,
+    COUNT(*) AS events
+FROM events
+GROUP BY hour
+ORDER BY hour;
+```
+
+## Query via HTTP Interface
+
+You can also query ClickHouse using HTTP with `curl`:
+
+```bash
+echo "SELECT COUNT(*) FROM events" | \
+  curl 'http://localhost:8123/' --data-binary @-
+```
+
+<Tip>
+The HTTP interface is perfect for integrations with applications, BI tools, and monitoring systems.
+</Tip>
+
+## Using the `numbers` Function
+
+ClickHouse provides built-in table functions for generating test data. The `numbers` function is incredibly useful:
+
+```sql
+SELECT number FROM numbers(10);
+```
+
+**Output:**
+```
+┌─number─┐
+│      0 │
+│      1 │
+│      2 │
+│      3 │
+│      4 │
+│      5 │
+│      6 │
+│      7 │
+│      8 │
+│      9 │
+└────────┘
+```
+
+Generate millions of rows for testing:
+
+```sql
+INSERT INTO events 
+SELECT 
+    now() - INTERVAL number SECOND AS event_time,
+    toDate(now() - INTERVAL number SECOND) AS event_date,
+    number AS user_id,
+    ['page_view', 'click', 'purchase'][number % 3 + 1] AS event_type,
+    ['US', 'UK', 'FR', 'DE', 'JP'][number % 5 + 1] AS country,
+    if(number % 10 = 0, rand() % 200, 0) AS revenue
+FROM numbers(100000)
+SETTINGS max_insert_block_size = 1000;
+```
+
+<Note>
+This generates 100,000 realistic events in seconds. Try querying this larger dataset!
+</Note>
+
+## Clean Up
+
+Drop the table when you're done:
+
+```sql
+DROP TABLE events;
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Explore all installation methods including Docker, packages, and cloud
+  </Card>
+  
+  <Card title="Tutorial" icon="graduation-cap" href="/tutorial">
+    Learn about table engines, data types, and advanced queries
+  </Card>
+  
+  <Card title="MergeTree Engine" icon="database" href="/engines/mergetree">
+    Deep dive into ClickHouse's most powerful table engine
+  </Card>
+  
+  <Card title="Functions Reference" icon="function" href="/functions/overview">
+    Explore ClickHouse's extensive function library
+  </Card>
+</CardGroup>
+
+<Tip>
+For production deployments, check out [ClickHouse Cloud](https://clickhouse.cloud) for a fully managed service.
+</Tip>

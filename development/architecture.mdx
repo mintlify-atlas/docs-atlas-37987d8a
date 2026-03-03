@@ -1,0 +1,425 @@
+---
+title: Developer Architecture Guide
+description: Internal architecture overview for ClickHouse developers
+---
+
+This guide provides a developer-focused overview of ClickHouse's internal architecture, helping you understand the codebase structure and key components.
+
+## Overview
+
+ClickHouse is a columnar database management system optimized for analytical queries. Understanding its architecture is essential for contributing to the codebase or building advanced features.
+
+<Note>
+For a comprehensive technical overview, read the VLDB paper: [ClickHouse - Lightning Fast Analytics for Everyone](https://www.vldb.org/pvldb/vol17/p3731-schulze.pdf)
+</Note>
+
+## Repository Structure
+
+The ClickHouse repository is organized into several top-level directories:
+
+```
+ClickHouse/
+├── src/               # Main source code
+├── base/              # Base libraries and utilities
+├── programs/          # Executable programs (server, client, etc.)
+├── tests/             # Test suites
+├── contrib/           # Third-party libraries
+├── cmake/             # CMake build scripts
+├── docs/              # Reference documentation
+├── utils/             # Development utilities
+└── ci/                # Continuous integration scripts
+```
+
+## Source Code Organization
+
+The `src/` directory contains the core ClickHouse implementation, organized by functional areas:
+
+### Core Components
+
+| Directory | Purpose |
+|-----------|----------|
+| `Core/` | Fundamental types and structures (`Block`, `Field`, `Column`) |
+| `Columns/` | Column implementations for different data types |
+| `DataTypes/` | SQL data type implementations |
+| `Functions/` | SQL function implementations |
+| `AggregateFunctions/` | Aggregate function implementations |
+| `Storages/` | Storage engine implementations |
+| `Interpreters/` | Query execution and interpretation |
+| `Parsers/` | SQL parser and AST |
+| `Analyzer/` | New query analyzer implementation |
+| `Processors/` | Query pipeline processors |
+| `QueryPipeline/` | Query execution pipeline |
+
+### Infrastructure Components
+
+| Directory | Purpose |
+|-----------|----------|
+| `Common/` | Common utilities, algorithms, and data structures |
+| `IO/` | Input/output abstractions and implementations |
+| `Compression/` | Compression algorithms |
+| `Formats/` | Data format readers/writers (CSV, JSON, Parquet, etc.) |
+| `Disks/` | Disk abstraction layer |
+| `Backups/` | Backup and restore functionality |
+
+### Specialized Components
+
+| Directory | Purpose |
+|-----------|----------|
+| `Databases/` | Database engine implementations |
+| `Dictionaries/` | External dictionary implementations |
+| `Access/` | Access control and authentication |
+| `Server/` | Server implementation and network protocols |
+| `Client/` | Client implementation |
+| `Coordination/` | Coordination service (Keeper) |
+| `Daemon/` | Daemon utilities |
+
+## Key Architecture Concepts
+
+### 1. Columnar Storage
+
+ClickHouse stores data in columns rather than rows. This is fundamental to its performance:
+
+```cpp
+// Core data structure - Block (from src/Core/Block.h)
+class Block
+{
+    // A block is a collection of columns with names and types
+    ColumnsWithTypeAndName data;
+};
+```
+
+Each column is stored separately, allowing:
+- Better compression (similar values together)
+- Efficient reading (only read needed columns)
+- Vectorized query execution
+
+### 2. Query Pipeline
+
+Queries are executed through a pipeline of processors:
+
+```
+Parser → AST → Analyzer → Query Plan → Pipeline → Execution
+```
+
+**Key stages:**
+
+1. **Parsing** (`src/Parsers/`): SQL text → Abstract Syntax Tree (AST)
+2. **Analysis** (`src/Analyzer/`, `src/Interpreters/`): AST → Query Plan
+3. **Optimization**: Query plan optimization and rewriting
+4. **Execution** (`src/Processors/`, `src/QueryPipeline/`): Pipeline execution
+
+### 3. Storage Engines
+
+Storage engines are implemented in `src/Storages/`. The most important is `MergeTree`:
+
+```
+src/Storages/
+├── MergeTree/           # MergeTree family engines
+│   ├── MergeTreeData.cpp        # Core data structure
+│   ├── MergeTreeDataSelectExecutor.cpp  # SELECT execution
+│   ├── MergeTreeDataWriter.cpp  # Data writing
+│   └── ...
+├── StorageMemory.cpp    # In-memory table engine
+├── StorageLog.cpp       # Simple log storage
+└── ...
+```
+
+**MergeTree** characteristics:
+- Primary key sorting and indexing
+- Background data merging
+- Efficient range queries
+- Support for partitioning
+
+### 4. Data Processing
+
+ClickHouse uses a push-based query execution model with processors:
+
+```cpp
+// Processor interface (simplified)
+class IProcessor
+{
+    virtual Status prepare() = 0;  // Check data availability
+    virtual void work() = 0;       // Process data
+};
+```
+
+Processors are connected into a pipeline that processes data chunks in parallel.
+
+## Memory Management
+
+ClickHouse uses custom memory allocators for performance:
+
+### Memory Tracking
+
+- All allocations are tracked for memory limits
+- Per-query and global memory limits
+- Memory profiling support
+
+### Allocators
+
+```cpp
+// Custom allocators in src/Common/
+- Arena          - Fast bulk allocator
+- HashTable      - Custom hash table implementation
+- PODArray       - Resizable array for POD types
+```
+
+<Warning>
+Never use `sleep` to fix race conditions. Use proper synchronization primitives like mutexes and condition variables.
+</Warning>
+
+## Important Data Structures
+
+### Block
+
+The fundamental unit of data processing:
+
+```cpp
+// Defined in src/Core/Block.h
+struct Block
+{
+    ColumnsWithTypeAndName data;  // Columns with metadata
+    BlockInfo info;               // Block metadata
+};
+```
+
+### Column
+
+Abstract interface for column implementations:
+
+```cpp
+// Defined in src/Columns/IColumn.h
+class IColumn
+{
+    virtual size_t size() const = 0;
+    virtual void insert(const Field & x) = 0;
+    virtual Field operator[](size_t n) const = 0;
+    // ... many other methods
+};
+```
+
+Common implementations in `src/Columns/`:
+- `ColumnVector` - Numeric columns
+- `ColumnString` - String columns
+- `ColumnArray` - Array columns
+- `ColumnNullable` - Nullable columns
+
+### Field
+
+Type-safe variant for storing single values:
+
+```cpp
+// Defined in src/Core/Field.h
+using Field = std::variant<
+    Null,
+    UInt64, Int64, Float64,
+    String, Array, Tuple,
+    // ... other types
+>;
+```
+
+## Build System Architecture
+
+ClickHouse uses CMake with several important features:
+
+### Standard Compliance
+
+```cmake
+# From CMakeLists.txt:271-277
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_EXTENSIONS ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+```
+
+### Optimization Flags
+
+```cmake
+# From CMakeLists.txt:279-290
+# Stable benchmarks with function alignment
+set(COMPILER_FLAGS "${COMPILER_FLAGS} -falign-functions=64")
+
+# Consistent floating-point results
+set(COMPILER_FLAGS "${COMPILER_FLAGS} -ffp-contract=off")
+
+# AMD64-specific optimizations
+if(ARCH_AMD64)
+    set(COMPILER_FLAGS "${COMPILER_FLAGS} -mbranches-within-32B-boundaries")
+endif()
+```
+
+### ThinLTO
+
+Link-Time Optimization is enabled by default on Linux:
+
+```cmake
+# From CMakeLists.txt:342-366
+if(ENABLE_THINLTO AND NOT ENABLE_TESTS AND NOT SANITIZE)
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -flto=thin")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -flto=thin")
+endif()
+```
+
+## Testing Infrastructure
+
+ClickHouse has multiple test types:
+
+### Test Directory Structure
+
+```
+tests/
+├── queries/           # SQL functional tests
+│   └── 0_stateless/  # Most functional tests
+├── integration/       # Integration tests with Docker
+├── performance/       # Performance regression tests
+├── ci/               # CI-specific tests
+└── fuzz/             # Fuzzing tests
+```
+
+### Unit Tests
+
+C++ unit tests using Google Test:
+
+```
+src/*/tests/gtest_*.cpp  # Unit tests alongside source
+```
+
+Build with:
+```bash
+cmake -DENABLE_TESTS=ON ..
+ninja
+```
+
+See the [Testing Guide](/development/testing) for details.
+
+## External Dependencies
+
+Third-party libraries are in `contrib/` as Git submodules:
+
+```
+contrib/
+├── llvm-project/      # LLVM for JIT compilation
+├── abseil-cpp/        # Google Abseil
+├── boost/            # Boost libraries
+├── re2/              # Regular expressions
+├── zstd/             # Compression
+└── ... (250+ libraries)
+```
+
+<Note>
+Always initialize submodules: `git submodule update --init --recursive`
+</Note>
+
+## Development Tools
+
+The `utils/` directory contains helpful development tools:
+
+```
+utils/
+├── check-style/           # Code style checker
+├── c++expr/              # Compile and run C++ snippets
+├── github/               # GitHub integration tools
+└── ... (30+ utilities)
+```
+
+### c++expr Tool
+
+Compile and run C++ snippets against the ClickHouse codebase:
+
+```bash
+# Query structure sizes
+.claude/tools/cppexpr.sh -i Core/Block.h 'OUT(sizeof(DB::Block))'
+
+# Benchmark code snippets
+.claude/tools/cppexpr.sh -b 100000 'Stopwatch sw;'
+```
+
+## Performance Considerations
+
+### Compiler Optimizations
+
+ClickHouse uses aggressive optimizations:
+
+- `-O3` optimization level (default for Release builds)
+- Function alignment for stable performance
+- Branch alignment on AMD64
+- ThinLTO for whole-program optimization
+- Position-independent code only when necessary
+
+### Memory Layout
+
+Data structures are optimized for cache efficiency:
+
+- Columnar layout for sequential access
+- POD arrays to avoid indirection
+- Arena allocators for reduced fragmentation
+- Hash tables optimized for analytical workloads
+
+### Parallelism
+
+Query execution is highly parallel:
+
+- Pipeline parallelism across processors
+- Thread pools for background tasks
+- Lock-free data structures where possible
+- Parallel data reading from storage
+
+## Debugging and Profiling
+
+### Debug Builds
+
+```bash
+cmake -DCMAKE_BUILD_TYPE=Debug \
+      -DDISABLE_OMIT_FRAME_POINTER=ON \
+      ..
+```
+
+### Sanitizers
+
+```bash
+# Address Sanitizer
+cmake -DSANITIZE=address ..
+
+# Thread Sanitizer
+cmake -DSANITIZE=thread ..
+```
+
+### Profiling
+
+```bash
+# Build with profiling info
+cmake -DENABLE_BUILD_PROFILING=ON \
+      -DDISABLE_OMIT_FRAME_POINTER=ON \
+      ..
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Building ClickHouse" icon="hammer" href="/development/building">
+  Learn how to build from source
+</Card>
+
+<Card title="Testing" icon="vial" href="/development/testing">
+  Understand the testing framework
+</Card>
+
+<Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+  Contribution guidelines
+</Card>
+
+<Card title="VLDB Paper" icon="file-pdf" href="https://www.vldb.org/pvldb/vol17/p3731-schulze.pdf">
+  Read the academic paper
+</Card>
+
+</CardGroup>
+
+## Additional Resources
+
+- [Architecture Documentation](https://clickhouse.com/docs/development/architecture/) - Official architecture docs
+- [Developer Instructions](https://clickhouse.com/docs/development/developer-instruction) - Development setup
+- [Code Browser](https://github.dev/ClickHouse/ClickHouse) - Browse code with syntax highlighting

@@ -1,0 +1,223 @@
+---
+title: ClickHouse Keeper Overview
+description: Learn about ClickHouse Keeper, a standalone coordination service that replaces Apache ZooKeeper
+---
+
+# ClickHouse Keeper Overview
+
+ClickHouse Keeper is a standalone coordination service that provides distributed synchronization and metadata storage for ClickHouse clusters. It serves as a replacement for Apache ZooKeeper with full protocol compatibility.
+
+## What is ClickHouse Keeper?
+
+ClickHouse Keeper (`clickhouse-keeper`) is a high-performance coordination service based on the Raft consensus algorithm. It provides the same functionality as ZooKeeper while offering better performance and easier operational management.
+
+## Architecture
+
+### Core Components
+
+ClickHouse Keeper consists of several key components implemented in `programs/keeper/` and `src/Coordination/`:
+
+#### KeeperDispatcher
+
+The `KeeperDispatcher` class (`src/Coordination/KeeperDispatcher.h`) is a high-level wrapper that:
+- Processes user requests via Raft consensus
+- Manages request and response queues
+- Handles session management and timeouts
+- Coordinates snapshot creation in background threads
+- Routes responses to client handlers using session IDs
+
+#### KeeperServer
+
+The `KeeperServer` class (`src/Coordination/KeeperServer.h`) wraps the Raft implementation:
+- Manages the Raft state machine and consensus
+- Handles cluster configuration and membership
+- Provides recovery mode for disaster scenarios
+- Supports dynamic reconfiguration
+
+#### KeeperStorage
+
+The `KeeperStorage` class (`src/Coordination/KeeperStorage.h`) is the main data storage layer:
+- Hash-map based in-memory storage by default
+- Optional RocksDB backend for larger datasets
+- Stores nodes with statistics (czxid, mzxid, version, etc.)
+- Manages ACLs, ephemeral nodes, and watches
+- Maintains session expiry queue
+
+#### Snapshot Management
+
+The snapshot system (`src/Coordination/KeeperSnapshotManager.h`) handles:
+- In-memory snapshots with minimal locking
+- Background serialization to disk
+- ZSTD compression (or custom LZ4 format)
+- Automatic snapshot creation based on log distance
+- S3 backup support via `KeeperSnapshotManagerS3`
+
+### Raft Consensus
+
+ClickHouse Keeper uses the NuRaft library to implement Raft consensus:
+
+- **Log Store**: Stores operation logs with configurable rotation (`InMemoryLogStore`, `KeeperLogStore`)
+- **State Machine**: Applies committed operations to storage (`KeeperStateMachine`)
+- **State Manager**: Manages cluster configuration and server state (`KeeperStateManager`)
+- **Leader Election**: Automatic leader election with configurable timeouts
+- **Log Replication**: Async replication for better performance
+
+### Threading Model
+
+Keeper uses multiple dedicated threads:
+
+```
+Request Thread → Batches and submits requests to Raft
+Response Thread → Delivers responses to client sessions
+Snapshot Thread → Creates and serializes snapshots to disk
+Session Cleaner → Removes expired sessions
+Update Config Thread → Applies cluster configuration changes
+```
+
+## ZooKeeper Compatibility
+
+ClickHouse Keeper is fully compatible with the ZooKeeper protocol:
+
+### Protocol Support
+
+- **TCP Protocol**: Native ZooKeeper wire protocol on `tcp_port` (default: 9181)
+- **Secure Protocol**: SSL/TLS support on `tcp_port_secure`
+- **Request Types**: All standard ZooKeeper operations (create, get, set, delete, exists, list, etc.)
+- **Sessions**: Client session management with configurable timeouts
+- **Watches**: Event notifications for node changes
+- **Ephemeral Nodes**: Nodes tied to client sessions
+- **Sequential Nodes**: Auto-incrementing sequential node creation
+- **ACLs**: Access control lists for node permissions
+
+### Four Letter Word Commands
+
+Keeper supports ZooKeeper's four letter word (4LW) commands for monitoring and diagnostics:
+
+**Standard Commands** (from `src/Coordination/FourLetterCommand.h`):
+- `ruok` - Test if server is running
+- `mntr` - Output monitoring metrics
+- `stat` - Server and client statistics
+- `srvr` - Server details only
+- `cons` - Connection/session details
+- `conf` - Configuration dump
+- `envi` - Environment details
+- `wchs` - Watch summary
+- `wchc` - Watches by session
+- `wchp` - Watches by path
+- `dump` - Outstanding sessions and ephemeral nodes
+- `dirs` - Snapshot and log file sizes
+- `isro` - Test if server is read-only
+- `srst` - Reset statistics
+- `crst` - Reset connection statistics
+
+**Extended Commands** (Keeper-specific):
+- `csnp` - Create snapshot manually
+- `lgif` - Raft log information
+- `rqld` - Request to be leader
+- `ydld` - Yield leadership
+- `rclc` - Recalculate storage
+- `clrs` - Clean resources
+- `ftfl` - Feature flags
+- `apiv` - API version
+- `rcvr` - Recovery status
+- `pfev` - Profile events
+- `lgrq` - Toggle request logging
+- `rcfg` - Reconfigure cluster (with arguments)
+- `jmst`, `jmfp`, `jmep`, `jmdp` - Jemalloc profiling (if enabled)
+
+### Differences from ZooKeeper
+
+While protocol-compatible, Keeper has some differences:
+
+1. **Performance**: Better throughput and lower latency for most workloads
+2. **Memory Usage**: More efficient memory management
+3. **Snapshots**: Faster snapshot creation with background serialization
+4. **Configuration**: Single XML configuration file (vs. Java properties)
+5. **Dependencies**: No Java runtime required
+6. **Monitoring**: Native Prometheus metrics support
+
+## Storage Modes
+
+### In-Memory Storage (Default)
+
+The default `KeeperMemoryStorage` uses a hash table:
+- Fast operations (O(1) lookups)
+- Suitable for datasets up to several GB
+- Full snapshot required for persistence
+- Memory usage proportional to node count
+
+### RocksDB Storage (Experimental)
+
+Optional `KeeperRocksStorage` for larger datasets:
+- Disk-backed storage with caching
+- Suitable for datasets larger than available RAM
+- Enabled with `experimental_use_rocksdb` setting
+- Incremental snapshots possible
+
+## Operational Features
+
+### Automatic Snapshot Creation
+
+Snapshots are created automatically based on:
+- `snapshot_distance` - Number of log entries before creating snapshot (default: 100,000)
+- `snapshots_to_keep` - Number of snapshots to retain (default: 3)
+- Background serialization without blocking operations
+
+### Session Management
+
+Sessions are managed with configurable timeouts:
+- `min_session_timeout_ms` - Minimum session timeout (default: 10,000ms)
+- `session_timeout_ms` - Maximum session timeout (default: 100,000ms)
+- `dead_session_check_period_ms` - Session cleanup interval (default: 500ms)
+
+### Memory Management
+
+Keeper includes automatic memory management:
+- `max_memory_usage_soft_limit` - Soft memory limit
+- `max_memory_usage_soft_limit_ratio` - Default 0.9 (90% of system RAM)
+- Memory worker for periodic cleanup
+- Cgroup-aware memory monitoring
+
+### Recovery Mode
+
+Force recovery mode allows recovering from quorum loss:
+```bash
+clickhouse-keeper --force-recovery
+```
+This allows Keeper to start and overwrite cluster configuration without quorum. Use with caution.
+
+## Performance Characteristics
+
+### Raft Parameters
+
+- `heart_beat_interval_ms` - Heartbeat interval (default: 500ms)
+- `election_timeout_lower_bound_ms` - Min election timeout (default: 1000ms)
+- `election_timeout_upper_bound_ms` - Max election timeout (default: 2000ms)
+- `leadership_expiry_ms` - Leader expiry timeout (default: 0, disabled)
+
+### Request Batching
+
+- `max_requests_batch_size` - Batch size for RAFT (default: 100)
+- `max_requests_batch_bytes_size` - Batch size in bytes (default: 100KB)
+- `max_requests_quick_batch_size` - Quick batch from queue (default: 100)
+- `max_flush_batch_size` - Flush batch size (default: 1000)
+
+### Async Replication
+
+- `async_replication` - Enable async replication (default: true)
+- Better performance with preserved consistency guarantees
+
+## Use Cases
+
+ClickHouse Keeper is designed for:
+
+1. **ClickHouse Cluster Coordination**: Primary use case for ClickHouse ReplicatedMergeTree
+2. **Distributed Locks**: Coordination for distributed applications
+3. **Leader Election**: Automatic failover and leader selection
+4. **Configuration Management**: Centralized configuration storage
+5. **Service Discovery**: Dynamic service registration and discovery
+
+## Next Steps
+
+- [Configuration](/tools/keeper/configuration) - Learn how to configure ClickHouse Keeper
+- [Operations](/tools/keeper/operations) - Operational procedures and best practices

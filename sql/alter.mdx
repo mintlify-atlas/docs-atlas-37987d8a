@@ -1,0 +1,569 @@
+---
+title: ALTER TABLE Operations
+description: Complete reference for ALTER TABLE statements including column operations, partitions, and table modifications
+---
+
+## Overview
+
+ALTER TABLE modifies table structure and data. ClickHouse supports column management, partition operations, and data mutations.
+
+## Syntax
+
+```sql
+ALTER TABLE [db.]table [ON CLUSTER cluster]
+    [ADD COLUMN ...]
+    [DROP COLUMN ...]
+    [MODIFY COLUMN ...]
+    [RENAME COLUMN ...]
+    [COMMENT COLUMN ...]
+    [ALTER COLUMN ...]
+    [MODIFY SETTING ...]
+    [RESET SETTING ...]
+    [ADD INDEX ...]
+    [DROP INDEX ...]
+    [MATERIALIZE INDEX ...]
+    [ADD CONSTRAINT ...]
+    [DROP CONSTRAINT ...]
+    [ADD PROJECTION ...]
+    [DROP PROJECTION ...]
+    [MATERIALIZE PROJECTION ...]
+```
+
+## Column Operations
+
+### ADD COLUMN
+
+Add new columns to a table:
+
+<CodeGroup>
+```sql Add Single Column
+ALTER TABLE users
+ADD COLUMN age UInt8;
+```
+
+```sql Add with Default
+ALTER TABLE users
+ADD COLUMN status String DEFAULT 'active';
+```
+
+```sql Add After Column
+ALTER TABLE users
+ADD COLUMN middle_name String AFTER first_name;
+```
+
+```sql Add Multiple Columns
+ALTER TABLE users
+ADD COLUMN age UInt8,
+ADD COLUMN city String,
+ADD COLUMN country String DEFAULT 'US';
+```
+
+```sql Conditional Add
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS email String;
+```
+</CodeGroup>
+
+#### Parameters
+
+<ParamField path="IF NOT EXISTS" type="modifier">
+  Skip operation if column already exists. Prevents errors in idempotent scripts.
+</ParamField>
+
+<ParamField path="AFTER column_name" type="modifier">
+  Position new column after specified column.
+</ParamField>
+
+<ParamField path="DEFAULT expression" type="modifier">
+  Default value for the column. Evaluated when inserting data without explicit value.
+</ParamField>
+
+### DROP COLUMN
+
+Remove columns from a table:
+
+<CodeGroup>
+```sql Drop Single Column
+ALTER TABLE users
+DROP COLUMN middle_name;
+```
+
+```sql Conditional Drop
+ALTER TABLE users
+DROP COLUMN IF EXISTS age;
+```
+
+```sql Drop Multiple Columns
+ALTER TABLE users
+DROP COLUMN age,
+DROP COLUMN middle_name;
+```
+</CodeGroup>
+
+### MODIFY COLUMN
+
+Change column type or default value:
+
+<CodeGroup>
+```sql Change Type
+ALTER TABLE users
+MODIFY COLUMN age UInt16;
+```
+
+```sql Change Default
+ALTER TABLE users
+MODIFY COLUMN status String DEFAULT 'pending';
+```
+
+```sql Conditional Modify
+ALTER TABLE users
+MODIFY COLUMN IF EXISTS age UInt64;
+```
+
+```sql Remove Default
+ALTER TABLE users
+MODIFY COLUMN status String;
+```
+</CodeGroup>
+
+<Warning>
+Type changes must be compatible. ClickHouse performs conversion, which may fail for incompatible types.
+</Warning>
+
+### RENAME COLUMN
+
+Rename existing columns:
+
+<CodeGroup>
+```sql Simple Rename
+ALTER TABLE users
+RENAME COLUMN name TO username;
+```
+
+```sql Conditional Rename
+ALTER TABLE users
+RENAME COLUMN IF EXISTS old_name TO new_name;
+```
+
+```sql Multiple Renames
+ALTER TABLE users
+RENAME COLUMN name TO username,
+RENAME COLUMN mail TO email;
+```
+</CodeGroup>
+
+### COMMENT COLUMN
+
+Add or modify column comments:
+
+<CodeGroup>
+```sql Add Comment
+ALTER TABLE users
+COMMENT COLUMN user_id 'Unique user identifier';
+```
+
+```sql Conditional Comment
+ALTER TABLE users
+COMMENT COLUMN IF EXISTS email 'User email address';
+```
+</CodeGroup>
+
+### CLEAR COLUMN
+
+Clear column data in partition:
+
+<CodeGroup>
+```sql Clear All
+ALTER TABLE events
+CLEAR COLUMN event_data;
+```
+
+```sql Clear in Partition
+ALTER TABLE events
+CLEAR COLUMN event_data IN PARTITION '202401';
+```
+</CodeGroup>
+
+## Partition Operations
+
+### DROP PARTITION
+
+Remove entire partitions:
+
+<CodeGroup>
+```sql Drop by Value
+ALTER TABLE events
+DROP PARTITION '2023-10-09';
+```
+
+```sql Drop with Tuple
+ALTER TABLE events
+DROP PARTITION (2, 4);
+```
+
+```sql Drop by Expression
+ALTER TABLE events
+DROP PARTITION tuple(toMonday('2023-10-09'));
+```
+
+```sql Drop by ID
+ALTER TABLE events
+DROP PARTITION ID '20231009';
+```
+</CodeGroup>
+
+<Note>
+From test file 02897_alter_partition_parameters.sql:3-171
+</Note>
+
+### DETACH PARTITION
+
+Detach partition from table:
+
+<CodeGroup>
+```sql Detach Partition
+ALTER TABLE events
+DETACH PARTITION '202401';
+```
+
+```sql Detach Part
+ALTER TABLE events
+DETACH PART 'partition_name_hash';
+```
+</CodeGroup>
+
+### ATTACH PARTITION
+
+Attach previously detached partition:
+
+<CodeGroup>
+```sql Attach Partition
+ALTER TABLE events
+ATTACH PARTITION '202401';
+```
+
+```sql Attach from Another Table
+ALTER TABLE events
+ATTACH PARTITION '202401' FROM events_backup;
+```
+</CodeGroup>
+
+### MOVE PARTITION
+
+Move partitions between disks or volumes:
+
+<CodeGroup>
+```sql Move to Disk
+ALTER TABLE events
+MOVE PARTITION '202401' TO DISK 'slow_disk';
+```
+
+```sql Move to Volume
+ALTER TABLE events
+MOVE PARTITION '202401' TO VOLUME 'archive';
+```
+</CodeGroup>
+
+### FREEZE PARTITION
+
+Create backup of partition:
+
+<CodeGroup>
+```sql Freeze Partition
+ALTER TABLE events
+FREEZE PARTITION '202401';
+```
+
+```sql Freeze with Name
+ALTER TABLE events
+FREEZE PARTITION '202401' WITH NAME 'backup_20240115';
+```
+</CodeGroup>
+
+### REPLACE PARTITION
+
+Replace partition with data from another table:
+
+```sql
+ALTER TABLE events
+REPLACE PARTITION '202401' FROM events_staging;
+```
+
+## Data Mutations
+
+### UPDATE
+
+Update column values:
+
+<CodeGroup>
+```sql Basic Update
+ALTER TABLE users
+UPDATE status = 'inactive'
+WHERE last_seen < now() - INTERVAL 90 DAY;
+```
+
+```sql Update Multiple Columns
+ALTER TABLE users
+UPDATE
+    status = 'premium',
+    updated_at = now()
+WHERE subscription_type = 'pro';
+```
+
+```sql Update in Partition
+ALTER TABLE events
+UPDATE processed = 1
+IN PARTITION '202401'
+WHERE event_type = 'click';
+```
+</CodeGroup>
+
+<Warning>
+UPDATE is a mutation and runs asynchronously. Use `SYSTEM SYNC REPLICA` to wait for completion.
+</Warning>
+
+### DELETE
+
+Delete rows (mutation):
+
+<CodeGroup>
+```sql Basic Delete
+ALTER TABLE events
+DELETE WHERE event_date < '2023-01-01';
+```
+
+```sql Delete in Partition
+ALTER TABLE events
+DELETE IN PARTITION '202312'
+WHERE event_type = 'test';
+```
+</CodeGroup>
+
+## Index Operations
+
+### ADD INDEX
+
+Add secondary index:
+
+<CodeGroup>
+```sql Add Index
+ALTER TABLE events
+ADD INDEX idx_user_id user_id TYPE minmax GRANULARITY 4;
+```
+
+```sql Conditional Add
+ALTER TABLE events
+ADD INDEX IF NOT EXISTS idx_type event_type TYPE set(100) GRANULARITY 4;
+```
+
+```sql Add After Column
+ALTER TABLE events
+ADD INDEX idx_time event_time TYPE minmax GRANULARITY 1 AFTER idx_user_id;
+```
+</CodeGroup>
+
+### DROP INDEX
+
+Remove index:
+
+<CodeGroup>
+```sql Drop Index
+ALTER TABLE events
+DROP INDEX idx_user_id;
+```
+
+```sql Conditional Drop
+ALTER TABLE events
+DROP INDEX IF EXISTS idx_user_id;
+```
+</CodeGroup>
+
+### MATERIALIZE INDEX
+
+Build index for existing data:
+
+<CodeGroup>
+```sql Materialize All
+ALTER TABLE events
+MATERIALIZE INDEX idx_user_id;
+```
+
+```sql Materialize in Partition
+ALTER TABLE events
+MATERIALIZE INDEX idx_user_id IN PARTITION '202401';
+```
+</CodeGroup>
+
+### CLEAR INDEX
+
+Clear index in partition:
+
+```sql
+ALTER TABLE events
+CLEAR INDEX idx_user_id IN PARTITION '202401';
+```
+
+## Table Settings
+
+### MODIFY SETTING
+
+Change table settings:
+
+<CodeGroup>
+```sql Single Setting
+ALTER TABLE events
+MODIFY SETTING index_granularity = 8192;
+```
+
+```sql Multiple Settings
+ALTER TABLE events
+MODIFY SETTING
+    ttl_only_drop_parts = 1,
+    merge_with_ttl_timeout = 3600;
+```
+</CodeGroup>
+
+### RESET SETTING
+
+Reset settings to default:
+
+<CodeGroup>
+```sql Single Reset
+ALTER TABLE events
+RESET SETTING index_granularity;
+```
+
+```sql Multiple Reset
+ALTER TABLE events
+RESET SETTING index_granularity, ttl_only_drop_parts;
+```
+</CodeGroup>
+
+## Modify Primary/Order Key
+
+<Warning>
+Changing ORDER BY or PRIMARY KEY requires table rebuild and can be expensive.
+</Warning>
+
+```sql
+ALTER TABLE events
+MODIFY ORDER BY (event_type, event_date, event_time);
+```
+
+## TTL Operations
+
+### MODIFY TTL
+
+Set or modify time-to-live:
+
+<CodeGroup>
+```sql Column TTL
+ALTER TABLE events
+MODIFY COLUMN event_data String TTL event_date + INTERVAL 30 DAY;
+```
+
+```sql Table TTL
+ALTER TABLE events
+MODIFY TTL event_date + INTERVAL 90 DAY;
+```
+
+```sql TTL with Action
+ALTER TABLE events
+MODIFY TTL
+    event_date + INTERVAL 30 DAY TO DISK 'cold',
+    event_date + INTERVAL 90 DAY DELETE;
+```
+</CodeGroup>
+
+### REMOVE TTL
+
+Remove TTL:
+
+```sql
+ALTER TABLE events
+REMOVE TTL;
+```
+
+## Modify Comment
+
+Change table comment:
+
+```sql
+ALTER TABLE users
+MODIFY COMMENT 'User accounts and profiles';
+```
+
+## Examples from Tests
+
+Real examples from ClickHouse test suite:
+
+<CodeGroup>
+```sql Add Column Example
+-- From: 00030_alter_table.sql:8-14
+ALTER TABLE alter_test ADD COLUMN Added0 UInt32;
+ALTER TABLE alter_test ADD COLUMN Added2 UInt32;
+ALTER TABLE alter_test ADD COLUMN Added1 UInt32 AFTER Added0;
+```
+
+```sql Drop Column Example
+-- From: 00030_alter_table.sql:18
+ALTER TABLE alter_test DROP COLUMN ToDrop;
+```
+
+```sql Modify Column Example
+-- From: 00030_alter_table.sql:20
+ALTER TABLE alter_test MODIFY COLUMN Added0 String;
+```
+
+```sql Nested Columns
+-- From: 00030_alter_table.sql:12-14
+ALTER TABLE alter_test ADD COLUMN AddedNested1 Nested(A UInt32, B UInt64) AFTER Added2;
+ALTER TABLE alter_test ADD COLUMN AddedNested1.C Array(String) AFTER AddedNested1.B;
+```
+</CodeGroup>
+
+## Async Mutations
+
+All mutations (UPDATE, DELETE) are asynchronous:
+
+<CodeGroup>
+```sql Check Mutation Status
+SELECT *
+FROM system.mutations
+WHERE table = 'events'
+  AND is_done = 0;
+```
+
+```sql Wait for Mutations
+SYSTEM SYNC REPLICA events;
+```
+
+```sql Kill Mutation
+KILL MUTATION WHERE table = 'events' AND mutation_id = 'mutation_123';
+```
+</CodeGroup>
+
+## Best Practices
+
+<Tip>
+- Use IF EXISTS / IF NOT EXISTS for idempotent operations
+- Batch multiple ALTER operations in single statement when possible
+- Monitor mutations in system.mutations table
+- Test column type changes on sample data first
+- Use DETACH instead of DROP for temporary partition removal
+- Plan TTL strategy during table design
+</Tip>
+
+<Warning>
+- Mutations can be resource-intensive on large tables
+- ORDER BY changes require complete table rebuild
+- Partition operations on non-partitioned tables will fail
+- Some operations may block concurrent queries
+</Warning>
+
+## Reference
+
+See also:
+- [CREATE TABLE](/sql/statements)
+- [Data Types](/sql/data-types)
+- [Table Engines](/engines/overview)

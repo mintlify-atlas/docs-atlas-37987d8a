@@ -1,0 +1,233 @@
+---
+title: clickhouse-format
+description: SQL query formatter and syntax checker for ClickHouse
+---
+
+The `clickhouse-format` utility formats SQL queries for ClickHouse, providing syntax validation, pretty-printing, and query obfuscation capabilities.
+
+## Usage
+
+```bash
+clickhouse-format [options] < query
+clickhouse-format --query "SELECT * FROM table" [options]
+```
+
+## Command-Line Options
+
+### Input
+
+| Option | Description |
+|--------|-------------|
+| `--query QUERY` | Query to format (reads from stdin if not specified) |
+
+### Formatting Options
+
+| Option | Description |
+|--------|-------------|
+| `--hilite, --highlight` | Add syntax highlighting with ANSI terminal escape sequences |
+| `--oneline` | Format query in a single line |
+| `--max_line_length LENGTH` | Format in single line if query length is less than specified (default: 0) |
+| `--backslash` | Add backslash at the end of each line |
+| `--semicolons_inline` | In multiquery mode, put semicolon on last line instead of new line |
+| `--comments` | Keep comments in the output |
+| `--show_secrets` | Show secret values like passwords and API keys (default: false) |
+
+### Mode Options
+
+| Option | Description |
+|--------|-------------|
+| `-q, --quiet` | Just check syntax, no output on success |
+| `-n, --multiquery` | Allow multiple queries in the same input |
+| `--obfuscate` | Obfuscate queries instead of formatting |
+| `--seed SEED` | Seed (arbitrary string) that determines the result of obfuscation |
+
+### Advanced Options
+
+| Option | Description |
+|--------|-------------|
+| `--allow_settings_after_format_in_insert` | Allow SETTINGS after FORMAT in INSERT queries |
+| `--max_parser_depth` | Maximum parser depth |
+| `--max_query_size` | Maximum query size in bytes |
+
+### Other Options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help message |
+
+## Examples
+
+### Format a query from stdin
+
+```bash
+echo "select a,b, c from table where a=1 and b=2" | clickhouse-format
+```
+
+Output:
+```sql
+SELECT
+    a,
+    b,
+    c
+FROM table
+WHERE (a = 1) AND (b = 2)
+```
+
+### Format a query with syntax highlighting
+
+```bash
+clickhouse-format --query "SELECT * FROM table" --hilite
+```
+
+### Format as single line
+
+```bash
+clickhouse-format --query "SELECT a, b FROM table WHERE x = 1" --oneline
+```
+
+Output:
+```sql
+SELECT a, b FROM table WHERE x = 1
+```
+
+### Check syntax without output
+
+```bash
+clickhouse-format --quiet < query.sql
+echo $?  # 0 if valid, non-zero if invalid
+```
+
+### Format multiple queries
+
+```bash
+cat queries.sql | clickhouse-format --multiquery
+```
+
+Input:
+```sql
+SELECT 1
+SELECT 2
+```
+
+Output:
+```sql
+SELECT 1
+;
+SELECT 2
+```
+
+### Format with inline semicolons
+
+```bash
+clickhouse-format --multiquery --semicolons_inline < queries.sql
+```
+
+Output:
+```sql
+SELECT 1;
+SELECT 2;
+```
+
+### Format with backslashes for line continuation
+
+```bash
+clickhouse-format --backslash --query "SELECT a, b FROM table"
+```
+
+Output:
+```sql
+SELECT \
+    a, \
+    b \
+FROM table
+```
+
+### Keep comments in output
+
+```bash
+clickhouse-format --comments < query_with_comments.sql
+```
+
+### Obfuscate a query
+
+```bash
+clickhouse-format --obfuscate --seed "mysecret" << EOF
+SELECT 
+    CustomerID, 
+    CustomerName, 
+    Revenue 
+FROM sales 
+WHERE Country = 'USA'
+EOF
+```
+
+The obfuscator replaces table names, column names, and string literals with random but consistent values, preserving the query structure.
+
+### Format INSERT with VALUES
+
+```bash
+clickhouse-format << EOF
+INSERT INTO table VALUES (1, 'hello'), (2, 'world')
+EOF
+```
+
+## Obfuscation Mode
+
+The `--obfuscate` option anonymizes queries while preserving their structure. It:
+
+- Replaces identifiers (table names, column names) with random names
+- Preserves SQL keywords and function names
+- Maintains query structure and syntax
+- Uses the `--seed` parameter to ensure deterministic obfuscation
+
+This is useful for sharing queries for debugging without exposing sensitive schema information.
+
+Example:
+```bash
+clickhouse-format --obfuscate --seed "test" \
+  --query "SELECT user_id, email FROM users WHERE country = 'US'"
+```
+
+## Notes
+
+- Without the `--query` option, input is read from stdin
+- The `--hilite` option requires ClickHouse to be built with the replxx library
+- Options `--quiet`, `--hilite`, `--oneline`, and `--obfuscate` are mutually exclusive in some combinations
+- The `--max_line_length` value must be less than 256
+- The formatter supports all ClickHouse SQL dialects and syntax extensions
+- By default, secrets (passwords, API keys) are hidden; use `--show_secrets` to display them
+
+## Exit Codes
+
+- `0` - Success (query is valid)
+- `1` - Help displayed or invalid options
+- `2` - Invalid option combination
+- Other non-zero values - Syntax error or parsing failure
+
+## Use Cases
+
+### Pre-commit Hook
+
+Use `clickhouse-format` to automatically format SQL in version control:
+
+```bash
+for file in *.sql; do
+    clickhouse-format < "$file" > "${file}.formatted"
+    mv "${file}.formatted" "$file"
+done
+```
+
+### Syntax Validation in CI/CD
+
+```bash
+if ! clickhouse-format --quiet < query.sql; then
+    echo "Invalid SQL syntax"
+    exit 1
+fi
+```
+
+### Generate Queries for Debugging
+
+```bash
+clickhouse-format --obfuscate --seed "random123" < production_query.sql > safe_query.sql
+```

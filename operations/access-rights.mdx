@@ -1,0 +1,400 @@
+---
+title: Access Rights and User Management
+description: Managing users, roles, and access control in ClickHouse
+---
+
+ClickHouse provides a comprehensive Role-Based Access Control (RBAC) system for managing user authentication, authorization, and permissions.
+
+## Authentication Methods
+
+ClickHouse supports multiple authentication types:
+
+- `no_password` - No authentication required
+- `plaintext_password` - Plain text password (not recommended for production)
+- `sha256_password` - SHA-256 hashed password
+- `double_sha1_password` - Double SHA-1 hashed password (MySQL compatibility)
+- `bcrypt_password` - BCrypt hashed password (most secure)
+- `ldap` - LDAP authentication
+- `kerberos` - Kerberos authentication
+
+## User Management
+
+### Creating Users with SQL
+
+```sql
+-- Create user with SHA256 password
+CREATE USER alice IDENTIFIED WITH sha256_password BY 'secure_password';
+
+-- Create user with BCrypt (recommended)
+CREATE USER bob IDENTIFIED WITH bcrypt_password BY 'very_secure_password';
+
+-- Create user with no password (not recommended)
+CREATE USER readonly_user IDENTIFIED WITH no_password;
+
+-- Create user with host restrictions
+CREATE USER restricted_user 
+IDENTIFIED WITH sha256_password BY 'password'
+HOST IP '192.168.1.0/24', IP '10.0.0.1';
+
+-- Create user with valid until date
+CREATE USER temp_user 
+IDENTIFIED WITH sha256_password BY 'password' 
+VALID UNTIL '2025-12-31 23:59:59';
+```
+
+<Warning>
+Always use strong password hashing methods like `bcrypt_password` or `sha256_password` in production environments.
+</Warning>
+
+### Creating Users in XML
+
+Users can also be defined in `users.xml`:
+
+```xml
+<clickhouse>
+    <users>
+        <alice>
+            <!-- SHA256 password hash -->
+            <password_sha256_hex>65e84be33532fb784c48129675f9eff3a682b27168c0ea744b2cf58ee02337c5</password_sha256_hex>
+            
+            <!-- Host restrictions -->
+            <networks>
+                <ip>192.168.1.0/24</ip>
+                <ip>10.0.0.1</ip>
+            </networks>
+            
+            <!-- Settings profile -->
+            <profile>default</profile>
+            
+            <!-- Quota -->
+            <quota>default</quota>
+            
+            <!-- Grant access management permissions -->
+            <access_management>1</access_management>
+        </alice>
+        
+        <readonly_user>
+            <password></password>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>readonly</profile>
+            <quota>default</quota>
+        </readonly_user>
+    </users>
+</clickhouse>
+```
+
+### Generating Password Hashes
+
+```bash
+# Generate SHA256 password
+PASSWORD=$(base64 < /dev/urandom | head -c8)
+echo "$PASSWORD"
+echo -n "$PASSWORD" | sha256sum | tr -d '-'
+
+# Generate double SHA1 password
+PASSWORD=$(base64 < /dev/urandom | head -c8)
+echo "$PASSWORD"
+echo -n "$PASSWORD" | sha1sum | tr -d '-' | xxd -r -p | sha1sum | tr -d '-'
+```
+
+## Role-Based Access Control (RBAC)
+
+### Creating Roles
+
+```sql
+-- Create a read-only role
+CREATE ROLE readonly_role;
+
+-- Create a data analyst role
+CREATE ROLE analyst;
+
+-- Create an admin role
+CREATE ROLE admin_role;
+```
+
+### Granting Permissions
+
+```sql
+-- Grant SELECT on specific database
+GRANT SELECT ON database_name.* TO readonly_role;
+
+-- Grant SELECT on specific table
+GRANT SELECT ON database_name.table_name TO analyst;
+
+-- Grant INSERT and SELECT
+GRANT INSERT, SELECT ON database_name.* TO analyst;
+
+-- Grant all privileges on a database
+GRANT ALL ON database_name.* TO admin_role;
+
+-- Grant system-level privileges
+GRANT SYSTEM RELOAD DICTIONARY ON *.* TO admin_role;
+GRANT SYSTEM SHUTDOWN TO admin_role;
+
+-- Grant cluster operations
+GRANT ON CLUSTER my_cluster TO admin_role;
+```
+
+### Assigning Roles to Users
+
+```sql
+-- Assign role to user
+GRANT readonly_role TO alice;
+GRANT analyst TO bob;
+
+-- Assign multiple roles
+GRANT readonly_role, analyst TO charlie;
+
+-- Set default roles
+ALTER USER alice DEFAULT ROLE readonly_role;
+ALTER USER bob DEFAULT ROLE ALL;  -- All granted roles
+ALTER USER charlie DEFAULT ROLE NONE;  -- No default roles
+```
+
+## Privileges Reference
+
+### Database and Table Privileges
+
+- `SELECT` - Read data from tables
+- `INSERT` - Insert data into tables
+- `ALTER` - Modify table structure
+- `CREATE` - Create databases and tables
+- `DROP` - Drop databases and tables
+- `TRUNCATE` - Truncate tables
+- `OPTIMIZE` - Optimize tables
+- `SHOW` - Show databases and tables
+- `KILL QUERY` - Kill queries
+
+### System Privileges
+
+- `SYSTEM SHUTDOWN` - Shutdown server
+- `SYSTEM RELOAD DICTIONARY` - Reload dictionaries
+- `SYSTEM RELOAD CONFIG` - Reload configuration
+- `SYSTEM MERGES` - Start/stop merges
+- `SYSTEM TTL MERGES` - Control TTL merges
+- `SYSTEM FETCHES` - Control fetches in replicated tables
+- `SYSTEM SENDS` - Control sends in distributed tables
+
+### Special Privileges
+
+- `ACCESS MANAGEMENT` - Create and manage users, roles, and policies
+- `IMPERSONATE` - Execute queries as another user
+- `SOURCES` - Access external data sources (MySQL, PostgreSQL, etc.)
+- `dictGet` - Use dictGet function
+
+## Row-Level Security (Row Policies)
+
+Row policies filter rows based on conditions:
+
+```sql
+-- Create row policy that filters by user
+CREATE ROW POLICY user_filter ON database_name.table_name
+FOR SELECT
+USING user_id = currentUser()
+TO alice;
+
+-- Create row policy for multiple users
+CREATE ROW POLICY department_filter ON database_name.employees
+FOR SELECT
+USING department = 'Engineering'
+TO analyst, readonly_role;
+
+-- Permissive policy (OR logic with other permissive policies)
+CREATE ROW POLICY permissive_policy ON database_name.table_name
+AS PERMISSIVE
+FOR SELECT
+USING status = 'active'
+TO bob;
+
+-- Restrictive policy (AND logic, must satisfy all restrictive policies)
+CREATE ROW POLICY restrictive_policy ON database_name.table_name
+AS RESTRICTIVE
+FOR SELECT
+USING created_date >= today() - INTERVAL 30 DAY
+TO bob;
+```
+
+## Quotas
+
+Quotas limit resource usage:
+
+### Creating Quotas
+
+```sql
+-- Create quota with limits
+CREATE QUOTA light_user
+FOR INTERVAL 1 hour MAX queries = 100, max_execution_time = 3600
+TO alice;
+
+-- Create quota with multiple intervals
+CREATE QUOTA power_user
+FOR INTERVAL 1 hour MAX queries = 1000,
+FOR INTERVAL 1 day MAX queries = 10000, max_execution_time = 86400
+TO bob;
+
+-- Keyed quota (per client)
+CREATE QUOTA api_quota
+KEY BY client_key
+FOR INTERVAL 1 hour MAX queries = 5000;
+```
+
+### Quota in XML
+
+```xml
+<clickhouse>
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+        
+        <limited_user>
+            <interval>
+                <duration>3600</duration>
+                <queries>100</queries>
+                <errors>10</errors>
+                <result_rows>1000000</result_rows>
+                <read_rows>10000000</read_rows>
+                <execution_time>3600</execution_time>
+            </interval>
+        </limited_user>
+    </quotas>
+</clickhouse>
+```
+
+## Settings Profiles
+
+Profiles define default settings for users:
+
+```sql
+-- Create settings profile
+CREATE SETTINGS PROFILE analyst_profile
+SETTINGS max_memory_usage = 20000000000,
+         max_execution_time = 600,
+         max_threads = 8;
+
+-- Create profile with constraints
+CREATE SETTINGS PROFILE readonly_profile
+SETTINGS readonly = 1 CONST,
+         max_memory_usage = 5000000000 MIN 1000000000 MAX 10000000000;
+
+-- Assign profile to user
+ALTER USER alice SETTINGS PROFILE analyst_profile;
+```
+
+## User Management Queries
+
+```sql
+-- List all users
+SELECT * FROM system.users;
+
+-- List all roles
+SELECT * FROM system.roles;
+
+-- List user grants
+SHOW GRANTS FOR alice;
+
+-- List current user's grants
+SHOW GRANTS;
+
+-- List all row policies
+SELECT * FROM system.row_policies;
+
+-- List all quotas
+SELECT * FROM system.quotas;
+
+-- View quota usage
+SELECT * FROM system.quota_usage;
+
+-- List settings profiles
+SELECT * FROM system.settings_profiles;
+```
+
+## LDAP Authentication
+
+Configure LDAP in `config.xml`:
+
+```xml
+<clickhouse>
+    <ldap_servers>
+        <my_ldap_server>
+            <host>ldap.example.com</host>
+            <port>636</port>
+            <bind_dn>uid={user_name},ou=users,dc=example,dc=com</bind_dn>
+            <enable_tls>yes</enable_tls>
+            <tls_minimum_protocol_version>tls1.2</tls_minimum_protocol_version>
+            <tls_require_cert>demand</tls_require_cert>
+            <verification_cooldown>300</verification_cooldown>
+        </my_ldap_server>
+    </ldap_servers>
+    
+    <user_directories>
+        <ldap>
+            <server>my_ldap_server</server>
+            <roles>
+                <default_role />
+            </roles>
+        </ldap>
+    </user_directories>
+</clickhouse>
+```
+
+## Access Control Configuration
+
+Configure access control paths in `config.xml`:
+
+```xml
+<clickhouse>
+    <user_directories>
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+        
+        <local_directory>
+            <!-- Path where SQL-created users are stored -->
+            <path>/var/lib/clickhouse/access/</path>
+        </local_directory>
+    </user_directories>
+</clickhouse>
+```
+
+## Best Practices
+
+<Steps>
+
+1. **Use strong authentication**
+   - Prefer `bcrypt_password` or `sha256_password`
+   - Disable `plaintext_password` and `no_password` in production
+
+2. **Implement least privilege**
+   - Grant only necessary permissions
+   - Use roles to group permissions
+   - Regularly audit user permissions
+
+3. **Network restrictions**
+   - Always restrict users to specific IP addresses or networks
+   - Never use `::/0` (all networks) in production unless absolutely necessary
+
+4. **Use row policies**
+   - Implement row-level security for multi-tenant environments
+   - Test policies thoroughly before deployment
+
+5. **Monitor access**
+   - Review `system.query_log` for access patterns
+   - Monitor failed authentication attempts
+   - Set up quotas to prevent resource abuse
+
+6. **Regular rotation**
+   - Rotate passwords regularly
+   - Set `VALID UNTIL` for temporary access
+   - Remove unused users and roles
+
+</Steps>

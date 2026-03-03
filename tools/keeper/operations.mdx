@@ -1,0 +1,796 @@
+---
+title: ClickHouse Keeper Operations
+description: Operational procedures for running and managing ClickHouse Keeper
+---
+
+# ClickHouse Keeper Operations
+
+This guide covers operational procedures for running, monitoring, and managing ClickHouse Keeper clusters.
+
+## Starting and Stopping
+
+### Starting Keeper
+
+**As a systemd service:**
+```bash
+sudo systemctl start clickhouse-keeper
+sudo systemctl enable clickhouse-keeper  # Enable auto-start on boot
+```
+
+**Manual start:**
+```bash
+clickhouse-keeper --config-file=/etc/clickhouse-keeper/keeper_config.xml
+```
+
+**With custom configuration:**
+```bash
+clickhouse-keeper --config-file=/path/to/keeper_config.xml --daemon
+```
+
+### Stopping Keeper
+
+**Graceful shutdown:**
+```bash
+sudo systemctl stop clickhouse-keeper
+```
+
+Keeper will:
+1. Stop accepting new connections
+2. Wait for outstanding requests to complete (up to `shutdown_wait_unfinished` seconds, default: 5)
+3. Close all client connections
+4. Shutdown the Raft server
+5. Exit cleanly
+
+**Force stop (not recommended):**
+```bash
+sudo killall -9 clickhouse-keeper
+```
+
+### Checking Status
+
+**Service status:**
+```bash
+sudo systemctl status clickhouse-keeper
+```
+
+**Process status:**
+```bash
+ps aux | grep clickhouse-keeper
+```
+
+**Quick health check:**
+```bash
+echo ruok | nc localhost 9181
+# Should return: imok
+```
+
+## Recovery Mode
+
+### Force Recovery
+
+Force recovery mode allows Keeper to start and reconfigure the cluster when quorum is lost. This is useful for disaster recovery but should be used with extreme caution.
+
+**Enable force recovery (from `programs/keeper/Keeper.cpp:207-214`):**
+```bash
+clickhouse-keeper --config-file=/etc/clickhouse-keeper/keeper_config.xml --force-recovery
+```
+
+This sets `keeper_server.force_recovery` to true, allowing Keeper to:
+- Start without requiring quorum
+- Overwrite cluster configuration
+- Become leader and accept writes
+
+**When to use:**
+- Majority of cluster nodes are permanently lost
+- Need to recover data from remaining node(s)
+- Rebuilding cluster from scratch
+
+**Procedure:**
+1. Stop all Keeper instances
+2. Start one instance with `--force-recovery`
+3. Verify data integrity
+4. Reconfigure cluster with new nodes
+5. Restart without `--force-recovery`
+
+## Monitoring
+
+### Four Letter Word Commands
+
+Keeper supports ZooKeeper-compatible 4LW commands for monitoring (from `src/Coordination/FourLetterCommand.h`).
+
+#### Server Status
+
+**Server details:**
+```bash
+echo srvr | nc localhost 9181
+```
+Output:
+```
+ClickHouse Keeper version: v24.1.1
+Latency min/avg/max: 0/0/0
+Received: 1523
+Sent: 1522
+Connections: 3
+Outstanding: 0
+Zxid: 0x100000042
+Mode: leader
+Node count: 156
+```
+
+**Full statistics:**
+```bash
+echo stat | nc localhost 9181
+```
+Includes server details plus client connection information.
+
+**Monitor metrics (Prometheus-compatible):**
+```bash
+echo mntr | nc localhost 9181
+```
+Output:
+```
+zk_version	v24.1.1
+zk_avg_latency	0
+zk_max_latency	15
+zk_min_latency	0
+zk_packets_received	1523
+zk_packets_sent	1522
+zk_num_alive_connections	3
+zk_outstanding_requests	0
+zk_server_state	leader
+zk_znode_count	156
+zk_watch_count	12
+zk_ephemerals_count	8
+zk_approximate_data_size	45123
+zk_open_file_descriptor_count	42
+zk_max_file_descriptor_count	1048576
+zk_followers	2
+zk_synced_followers	2
+```
+
+#### Configuration
+
+**View configuration:**
+```bash
+echo conf | nc localhost 9181
+```
+Displays all coordination settings from `KeeperConfigurationAndSettings`.
+
+#### Connection Management
+
+**List connections:**
+```bash
+echo cons | nc localhost 9181
+```
+Shows all client connections with session IDs, queued requests, and latency stats.
+
+**Reset connection statistics:**
+```bash
+echo crst | nc localhost 9181
+```
+
+**Reset server statistics:**
+```bash
+echo srst | nc localhost 9181
+```
+
+#### Watch Information
+
+**Watch summary:**
+```bash
+echo wchs | nc localhost 9181
+```
+Shows total watch count and connection count.
+
+**Watches by session:**
+```bash
+echo wchc | nc localhost 9181
+```
+Lists all watches organized by session ID.
+
+**Watches by path:**
+```bash
+echo wchp | nc localhost 9181
+```
+Lists all watches organized by path.
+
+#### Snapshot and Log Management
+
+**Create snapshot manually:**
+```bash
+echo csnp | nc localhost 9181
+```
+Triggers immediate snapshot creation (from `src/Coordination/FourLetterCommand.h:346`).
+
+**Log information:**
+```bash
+echo lgif | nc localhost 9181
+```
+Shows Raft log details:
+```
+first_log_idx	1
+first_log_term	1
+last_log_idx	10042
+last_log_term	1
+last_committed_idx	10042
+leader_committed_log_idx	10042
+target_committed_log_idx	10042
+last_snapshot_idx	10000
+```
+
+**Data directory sizes:**
+```bash
+echo dirs | nc localhost 9181
+```
+Shows total size of snapshots and logs.
+
+#### Cluster Management
+
+**Request leadership:**
+```bash
+echo rqld | nc localhost 9181
+```
+Requests this node to become leader.
+
+**Yield leadership:**
+```bash
+echo ydld | nc localhost 9181
+```
+Current leader steps down and becomes follower.
+
+**Recalculate storage:**
+```bash
+echo rclc | nc localhost 9181
+```
+Recalculates storage metadata and digests.
+
+**Clean resources:**
+```bash
+echo clrs | nc localhost 9181
+```
+Cleans up unused resources.
+
+**Reconfigure cluster:**
+```bash
+echo "rcfg add server.4=newhost:9234" | nc localhost 9181
+echo "rcfg remove 3" | nc localhost 9181
+```
+
+#### Diagnostic Commands
+
+**Environment info:**
+```bash
+echo envi | nc localhost 9181
+```
+Shows OS, version, and environment details.
+
+**API version:**
+```bash
+echo apiv | nc localhost 9181
+```
+Shows supported API version.
+
+**Feature flags:**
+```bash
+echo ftfl | nc localhost 9181
+```
+Shows enabled feature flags.
+
+**Profile events:**
+```bash
+echo pfev | nc localhost 9181
+```
+Shows performance event counters.
+
+**Toggle request logging:**
+```bash
+echo lgrq | nc localhost 9181
+```
+Enables/disables detailed request logging.
+
+**Check if read-only:**
+```bash
+echo isro | nc localhost 9181
+```
+Returns `ro` (read-only) or `rw` (read-write).
+
+**Recovery status:**
+```bash
+echo rcvr | nc localhost 9181
+```
+
+#### Jemalloc Profiling (if enabled)
+
+```bash
+echo jmst | nc localhost 9181  # Dump stats
+echo jmfp | nc localhost 9181  # Flush profile
+echo jmep | nc localhost 9181  # Enable profiling
+echo jmdp | nc localhost 9181  # Disable profiling
+```
+
+### Prometheus Metrics
+
+Keeper exposes Prometheus-compatible metrics on the configured port (default: 9363):
+
+```bash
+curl http://localhost:9363/metrics
+```
+
+Key metrics include:
+- `keeper_packet_sent` - Total packets sent
+- `keeper_packet_received` - Total packets received
+- `keeper_alive_connections` - Active client connections
+- `keeper_outstanding_requests` - Queued requests
+- `keeper_znode_count` - Total nodes in storage
+- `keeper_watch_count` - Active watches
+- `keeper_ephemerals_count` - Ephemeral nodes
+- `keeper_data_size` - Approximate data size
+- `keeper_leader` - Is leader (1/0)
+- `keeper_follower` - Is follower (1/0)
+- `keeper_synced_followers` - Synchronized followers
+
+### HTTP Control Endpoints
+
+If `http_control.port` is configured, additional HTTP endpoints are available:
+
+**Health check:**
+```bash
+curl http://localhost:9182/
+```
+
+**Configuration:**
+```bash
+curl http://localhost:9182/config
+```
+
+### Log Monitoring
+
+**Main log:**
+```bash
+tail -f /var/log/clickhouse-keeper/clickhouse-keeper.log
+```
+
+**Error log:**
+```bash
+tail -f /var/log/clickhouse-keeper/clickhouse-keeper.err.log
+```
+
+**Key log messages to watch:**
+- `Ready for connections` - Keeper started successfully
+- `Keeper is bound to a subset of NUMA nodes` - NUMA awareness
+- `Shutting down` - Graceful shutdown initiated
+- `RAFT logs` - Consensus activity (if `raft_logs_level` not `none`)
+- Slow query warnings (if threshold exceeded)
+
+## Backup and Restore
+
+### Snapshot Backups
+
+Snapshots are stored in `snapshot_storage_path` (or `storage_path/snapshots`).
+
+**Snapshot files:**
+```bash
+ls -lh /var/lib/clickhouse/coordination/snapshots/
+```
+Example:
+```
+snapshot_100000.bin.zstd
+snapshot_200000.bin.zstd
+snapshot_300000.bin.zstd
+```
+
+Filenames contain the log index: `snapshot_<log_idx>.bin[.zstd]`
+
+**Manual snapshot creation:**
+```bash
+echo csnp | nc localhost 9181
+```
+
+**Automatic snapshots:**
+Configured via `snapshot_distance` setting (default: 100,000 log entries).
+
+### Backup Procedure
+
+**1. Create snapshot:**
+```bash
+echo csnp | nc localhost 9181
+```
+
+**2. Get latest snapshot info:**
+```bash
+echo lgif | nc localhost 9181 | grep last_snapshot_idx
+```
+
+**3. Copy snapshot file:**
+```bash
+LAST_SNAPSHOT=$(ls -t /var/lib/clickhouse/coordination/snapshots/ | head -1)
+cp /var/lib/clickhouse/coordination/snapshots/$LAST_SNAPSHOT /backup/
+```
+
+**4. Optionally backup logs:**
+```bash
+cp -r /var/lib/clickhouse/coordination/logs /backup/
+```
+
+### Restore Procedure
+
+**1. Stop Keeper:**
+```bash
+sudo systemctl stop clickhouse-keeper
+```
+
+**2. Clear existing data:**
+```bash
+rm -rf /var/lib/clickhouse/coordination/snapshots/*
+rm -rf /var/lib/clickhouse/coordination/logs/*
+```
+
+**3. Restore snapshot:**
+```bash
+cp /backup/snapshot_*.bin.zstd /var/lib/clickhouse/coordination/snapshots/
+chown -R clickhouse:clickhouse /var/lib/clickhouse/coordination
+```
+
+**4. Start Keeper:**
+```bash
+sudo systemctl start clickhouse-keeper
+```
+
+**5. Verify:**
+```bash
+echo stat | nc localhost 9181
+```
+
+### S3 Snapshot Backups
+
+Keeper supports automatic S3 snapshot uploads via `KeeperSnapshotManagerS3`:
+
+```xml
+<keeper_server>
+    <s3>
+        <endpoint>https://s3.amazonaws.com/my-bucket/keeper-snapshots/</endpoint>
+        <access_key_id>YOUR_ACCESS_KEY</access_key_id>
+        <secret_access_key>YOUR_SECRET_KEY</secret_access_key>
+        <upload_interval>3600</upload_interval>  <!-- seconds -->
+    </s3>
+</keeper_server>
+```
+
+## Cluster Operations
+
+### Adding a Node
+
+**1. Prepare new node:**
+- Install ClickHouse Keeper
+- Configure with new `server_id`
+- Set `storage_path` to empty directory
+
+**2. Update configuration on all nodes:**
+```xml
+<raft_configuration>
+    <!-- existing servers -->
+    <server>
+        <id>4</id>
+        <hostname>keeper4.example.com</hostname>
+        <port>9234</port>
+    </server>
+</raft_configuration>
+```
+
+**3. Reload configuration:**
+```bash
+kill -SIGHUP $(pidof clickhouse-keeper)
+```
+
+**4. Or use dynamic reconfiguration:**
+```bash
+echo "rcfg add server.4=keeper4.example.com:9234" | nc localhost 9181
+```
+
+**5. Start new node:**
+```bash
+sudo systemctl start clickhouse-keeper
+```
+
+**6. Verify:**
+```bash
+echo srvr | nc localhost 9181
+echo mntr | nc localhost 9181 | grep followers
+```
+
+### Removing a Node
+
+**1. Dynamic removal:**
+```bash
+echo "rcfg remove 4" | nc localhost 9181
+```
+
+**2. Stop node:**
+```bash
+sudo systemctl stop clickhouse-keeper  # on node 4
+```
+
+**3. Update configuration on remaining nodes:**
+Remove the server entry from `raft_configuration`.
+
+**4. Reload configuration:**
+```bash
+kill -SIGHUP $(pidof clickhouse-keeper)
+```
+
+### Replacing a Failed Node
+
+**If node failed permanently:**
+
+1. Remove failed node from cluster (see above)
+2. Add new node with different `server_id`
+3. Let new node sync from snapshot and logs
+
+**If node is temporarily down:**
+
+1. Fix and restart the node
+2. Node will rejoin automatically
+3. If logs are too stale, it will request snapshot
+
+### Leader Election
+
+**Check current leader:**
+```bash
+echo srvr | nc localhost 9181 | grep Mode
+# Mode: leader or Mode: follower
+```
+
+**Force leader election:**
+1. Stop current leader
+2. Remaining nodes will elect new leader (within `election_timeout_upper_bound_ms`)
+
+**Request specific node to become leader:**
+```bash
+echo rqld | nc localhost 9181  # on desired node
+```
+
+**Step down as leader:**
+```bash
+echo ydld | nc localhost 9181  # on current leader
+```
+
+## Performance Tuning
+
+### Memory Optimization
+
+Keeper automatically sets memory limit to 90% of RAM (from `programs/keeper/Keeper.cpp:355-378`):
+
+```xml
+<keeper_server>
+    <!-- Override automatic calculation -->
+    <max_memory_usage_soft_limit>8589934592</max_memory_usage_soft_limit> <!-- 8GB -->
+</keeper_server>
+```
+
+**Monitor memory:**
+```bash
+echo mntr | nc localhost 9181 | grep memory
+ps aux | grep clickhouse-keeper
+```
+
+### Disk I/O Optimization
+
+**Use fast storage:**
+- SSD or NVMe recommended for `log_storage_path`
+- Regular HDD acceptable for `snapshot_storage_path`
+
+**Disable force sync for better performance (reduces durability):**
+```xml
+<coordination_settings>
+    <force_sync>false</force_sync>
+</coordination_settings>
+```
+
+**Enable log compression:**
+```xml
+<coordination_settings>
+    <compress_logs>true</compress_logs>
+</coordination_settings>
+```
+
+### Network Optimization
+
+**Enable TCP_NODELAY:**
+```xml
+<keeper_server>
+    <tcp_nodelay>true</tcp_nodelay>
+</keeper_server>
+```
+
+**Tune timeouts for low-latency networks:**
+```xml
+<coordination_settings>
+    <heart_beat_interval_ms>250</heart_beat_interval_ms>
+    <election_timeout_lower_bound_ms>500</election_timeout_lower_bound_ms>
+    <election_timeout_upper_bound_ms>1000</election_timeout_upper_bound_ms>
+</coordination_settings>
+```
+
+### Request Batching
+
+**Increase batch sizes for high-throughput:**
+```xml
+<coordination_settings>
+    <max_requests_batch_size>200</max_requests_batch_size>
+    <max_requests_batch_bytes_size>204800</max_requests_batch_bytes_size>
+    <max_flush_batch_size>2000</max_flush_batch_size>
+</coordination_settings>
+```
+
+## Troubleshooting
+
+### Keeper Won't Start
+
+**Check logs:**
+```bash
+journalctl -u clickhouse-keeper -n 100
+tail -100 /var/log/clickhouse-keeper/clickhouse-keeper.err.log
+```
+
+**Common issues:**
+- Port already in use: Check with `netstat -tlnp | grep 9181`
+- Invalid configuration: Validate XML syntax
+- Permission errors: Check ownership of `storage_path`
+- Missing `keeper_server` section: Required in config
+
+**Fix permissions:**
+```bash
+sudo chown -R clickhouse:clickhouse /var/lib/clickhouse/coordination
+sudo chmod -R 755 /var/lib/clickhouse/coordination
+```
+
+### Split Brain / Multiple Leaders
+
+**Symptoms:**
+- Multiple nodes report `Mode: leader`
+- Inconsistent data between nodes
+
+**Prevention:**
+Set `leadership_expiry_ms` ≤ `election_timeout_lower_bound_ms`:
+```xml
+<coordination_settings>
+    <leadership_expiry_ms>1000</leadership_expiry_ms>
+    <election_timeout_lower_bound_ms>1000</election_timeout_lower_bound_ms>
+</coordination_settings>
+```
+
+**Recovery:**
+1. Stop all nodes
+2. Use `--force-recovery` on one node
+3. Reconfigure and restart cluster
+
+### High Latency
+
+**Check metrics:**
+```bash
+echo mntr | nc localhost 9181 | grep latency
+```
+
+**Common causes:**
+- Slow disk I/O: Check with `iostat -x 1`
+- Network issues: Check with `ping` and `traceroute`
+- CPU saturation: Check with `top`
+- Large requests: Check slow query logs
+
+**Enable slow query logging:**
+```xml
+<coordination_settings>
+    <log_slow_total_threshold_ms>100</log_slow_total_threshold_ms>
+    <log_slow_cpu_threshold_ms>50</log_slow_cpu_threshold_ms>
+</coordination_settings>
+```
+
+### Node Can't Sync
+
+**Symptoms:**
+- Node stuck in follower mode
+- High outstanding requests
+- Logs show `stale_log_gap` exceeded
+
+**Solution:**
+Node will request snapshot from leader automatically. Monitor:
+```bash
+echo lgif | nc localhost 9181
+watch "echo mntr | nc localhost 9181 | grep znode_count"
+```
+
+### Disk Space Issues
+
+**Check snapshot and log sizes:**
+```bash
+echo dirs | nc localhost 9181
+du -sh /var/lib/clickhouse/coordination/*
+```
+
+**Clean old logs:**
+Keeper automatically cleans logs based on `reserved_log_items` and `snapshot_distance`.
+
+**Reduce retention:**
+```xml
+<coordination_settings>
+    <snapshots_to_keep>3</snapshots_to_keep>
+    <reserved_log_items>50000</reserved_log_items>
+</coordination_settings>
+```
+
+**Manual cleanup (dangerous):**
+```bash
+sudo systemctl stop clickhouse-keeper
+rm /var/lib/clickhouse/coordination/logs/log_*  # Keep snapshots!
+sudo systemctl start clickhouse-keeper
+```
+
+## Security
+
+### Authentication
+
+**Super digest:**
+Configure admin credentials:
+```xml
+<keeper_server>
+    <superdigest>admin:YourBase64DigestHere</superdigest>
+</keeper_server>
+```
+
+### Network Security
+
+**Use SSL/TLS:**
+```xml
+<keeper_server>
+    <tcp_port_secure>9281</tcp_port_secure>
+</keeper_server>
+```
+
+**Firewall rules:**
+```bash
+# Allow client connections
+sudo ufw allow 9181/tcp
+
+# Allow inter-server Raft communication
+sudo ufw allow 9234/tcp
+
+# Allow Prometheus metrics (restrict to monitoring network)
+sudo ufw allow from 10.0.0.0/8 to any port 9363
+```
+
+### Access Control
+
+**Restrict 4LW commands:**
+```xml
+<keeper_server>
+    <four_letter_word_allow_list>ruok,mntr,stat</four_letter_word_allow_list>
+</keeper_server>
+```
+
+**Restrict HTTP endpoints:**
+Bind to localhost or use firewall:
+```xml
+<keeper_server>
+    <http_control>
+        <port>9182</port>
+    </http_control>
+</keeper_server>
+```
+
+## Best Practices
+
+1. **Use 3 or 5 nodes** for production (odd number for quorum)
+2. **Run on dedicated hardware** separate from ClickHouse servers
+3. **Use fast SSD/NVMe** for log storage
+4. **Monitor regularly** with Prometheus and 4LW commands
+5. **Enable async replication** for better performance
+6. **Compress logs and snapshots** to save space
+7. **Test failure scenarios** in staging environment
+8. **Keep snapshots backed up** to S3 or external storage
+9. **Update configuration gradually** on one node at a time
+10. **Monitor log sizes** and adjust retention settings
+
+## Next Steps
+
+- [Overview](/tools/keeper/overview) - Learn about Keeper architecture
+- [Configuration](/tools/keeper/configuration) - Detailed configuration reference

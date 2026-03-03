@@ -1,0 +1,488 @@
+---
+title: clickhouse-benchmark
+description: Performance benchmarking and load testing tool for ClickHouse
+---
+
+`clickhouse-benchmark` is a tool for evaluating ClickHouse performance by executing queries under controlled load conditions. It measures query latency, throughput, and provides statistical analysis.
+
+## Basic Usage
+
+<CodeGroup>
+```bash Single Query
+# Benchmark a simple query
+echo "SELECT count() FROM system.numbers LIMIT 1000000" | clickhouse-benchmark
+
+# Benchmark with custom concurrency
+echo "SELECT sum(number) FROM numbers(10000000)" | clickhouse-benchmark --concurrency=10
+```
+
+```bash Multiple Queries
+# Create queries file
+cat > queries.txt << EOF
+SELECT count() FROM system.tables
+SELECT count() FROM system.columns
+SELECT * FROM system.functions LIMIT 100
+EOF
+
+# Run benchmark
+clickhouse-benchmark < queries.txt
+```
+
+```bash With Connection Parameters
+# Benchmark remote server
+echo "SELECT 1" | clickhouse-benchmark \
+  --host=example.com \
+  --port=9000 \
+  --user=benchmark \
+  --password=secret
+```
+</CodeGroup>
+
+## Connection Options
+
+### Host and Port Configuration
+
+```bash
+# Single host
+echo "SELECT 1" | clickhouse-benchmark --host=localhost --port=9000
+
+# Multiple hosts for distributed testing
+echo "SELECT count() FROM distributed_table" | clickhouse-benchmark \
+  --host host1 --host host2 --host host3 \
+  --port 9000
+
+# Different ports per host
+echo "SELECT 1" | clickhouse-benchmark \
+  --host host1 --port 9000 \
+  --host host2 --port 9001
+
+# Round-robin across hosts (don't compare, just distribute)
+echo "SELECT 1" | clickhouse-benchmark \
+  --host host1 --host host2 \
+  --roundrobin
+```
+
+### Authentication
+
+<CodeGroup>
+```bash Credentials
+# Username and password
+echo "SELECT 1" | clickhouse-benchmark \
+  --user=admin \
+  --password=secret123
+
+# Environment variables
+export CLICKHOUSE_USER=admin
+export CLICKHOUSE_PASSWORD=secret
+echo "SELECT 1" | clickhouse-benchmark
+```
+
+```bash Secure Connection
+# Enable TLS
+echo "SELECT 1" | clickhouse-benchmark --secure
+
+# Accept invalid certificates (for testing)
+echo "SELECT 1" | clickhouse-benchmark \
+  --secure \
+  --accept-invalid-certificate
+```
+
+```bash Named Connection
+# Use connection from config file
+echo "SELECT 1" | clickhouse-benchmark \
+  --config=/path/to/config.xml \
+  --connection=production
+```
+</CodeGroup>
+
+## Concurrency and Load Control
+
+### Parallel Queries
+
+```bash
+# Fixed concurrency (10 parallel queries)
+echo "SELECT sleep(1)" | clickhouse-benchmark --concurrency=10
+
+# Gradually increase concurrency from 1 to 20
+echo "SELECT 1" | clickhouse-benchmark \
+  --concurrency=1 \
+  --max_concurrency=20 \
+  --delay=5
+
+# Maximum parallelism
+echo "SELECT count() FROM large_table" | clickhouse-benchmark \
+  --concurrency=100
+```
+
+### Execution Limits
+
+<CodeGroup>
+```bash Iteration Limits
+# Run exactly 1000 queries
+echo "SELECT 1" | clickhouse-benchmark --iterations=1000
+
+# No iteration limit (runs until stopped)
+echo "SELECT 1" | clickhouse-benchmark --iterations=0
+```
+
+```bash Time Limits
+# Run for 60 seconds
+echo "SELECT 1" | clickhouse-benchmark --timelimit=60
+
+# Run for 5 minutes
+echo "SELECT 1" | clickhouse-benchmark --timelimit=300
+
+# Combine iterations and time limit (first reached wins)
+echo "SELECT 1" | clickhouse-benchmark \
+  --iterations=10000 \
+  --timelimit=60
+```
+</CodeGroup>
+
+## Reporting and Statistics
+
+### Report Intervals
+
+```bash
+# Report every 1 second (default)
+echo "SELECT 1" | clickhouse-benchmark --delay=1
+
+# Report every 5 seconds
+echo "SELECT 1" | clickhouse-benchmark --delay=5
+
+# No intermediate reports (only final)
+echo "SELECT 1" | clickhouse-benchmark --delay=0
+
+# Precise per-interval reporting with weighted metrics
+echo "SELECT 1" | clickhouse-benchmark --delay=2 --precise
+```
+
+### Cumulative Statistics
+
+```bash
+# Show cumulative stats instead of per-interval
+echo "SELECT 1" | clickhouse-benchmark --cumulative
+
+# Cumulative with reports every 10 seconds
+echo "SELECT 1" | clickhouse-benchmark \
+  --cumulative \
+  --delay=10 \
+  --timelimit=60
+```
+
+### Statistical Confidence
+
+```bash
+# Set T-test confidence level
+# 0=80%, 1=90%, 2=95%, 3=98%, 4=99%, 5=99.5% (default)
+echo "SELECT 1" | clickhouse-benchmark --confidence=5
+
+# Lower confidence for faster results
+echo "SELECT 1" | clickhouse-benchmark --confidence=2
+```
+
+## Query Execution Options
+
+### Query Processing Stage
+
+```bash
+# Complete execution (default)
+echo "SELECT count() FROM table" | clickhouse-benchmark --stage=complete
+
+# Fetch columns only (skip aggregation)
+echo "SELECT * FROM table" | clickhouse-benchmark --stage=fetch_columns
+
+# With mergeable state (for distributed queries)
+echo "SELECT count() FROM distributed" | clickhouse-benchmark \
+  --stage=with_mergeable_state
+
+# After aggregation
+echo "SELECT sum(x) FROM table" | clickhouse-benchmark \
+  --stage=with_mergeable_state_after_aggregation
+```
+
+### Query Execution Control
+
+<CodeGroup>
+```bash Query IDs
+# Fixed query ID for all queries
+echo "SELECT 1" | clickhouse-benchmark --query_id=benchmark_test
+
+# Query ID prefix (unique ID per query)
+echo "SELECT 1" | clickhouse-benchmark --query_id_prefix=load_test
+```
+
+```bash Randomization
+# Randomize query execution order
+cat queries.txt | clickhouse-benchmark --randomize
+
+# Sequential execution (default)
+cat queries.txt | clickhouse-benchmark
+```
+</CodeGroup>
+
+## Error Handling
+
+```bash
+# Stop on first error (default)
+echo "SELECT 1/0" | clickhouse-benchmark
+
+# Continue on errors
+echo "SELECT 1/0" | clickhouse-benchmark --ignore-error
+
+# Allow up to 10 consecutive errors before stopping
+echo "SELECT 1" | clickhouse-benchmark --max-consecutive-errors=10
+
+# Combine with error continuation
+cat mixed_queries.txt | clickhouse-benchmark \
+  --ignore-error \
+  --max-consecutive-errors=5
+```
+
+## Connection Management
+
+```bash
+# Reconnect after every query
+echo "SELECT 1" | clickhouse-benchmark --reconnect=1
+
+# Reconnect every 100 queries
+echo "SELECT 1" | clickhouse-benchmark --reconnect=100
+
+# Never reconnect (default)
+echo "SELECT 1" | clickhouse-benchmark --reconnect=0
+```
+
+## Performance Measurement
+
+### Time Measurement
+
+```bash
+# Server-side time (default, more accurate)
+echo "SELECT sleep(1)" | clickhouse-benchmark
+
+# Client-side time (includes network latency)
+echo "SELECT sleep(1)" | clickhouse-benchmark --client-side-time
+```
+
+### Query Settings
+
+```bash
+# Benchmark with specific settings
+echo "SELECT count() FROM large_table" | clickhouse-benchmark \
+  --max_threads=16 \
+  --max_memory_usage=10000000000
+
+# Test different memory limits
+echo "SELECT * FROM huge_table" | clickhouse-benchmark \
+  --max_memory_usage=5000000000 \
+  --concurrency=5
+```
+
+## Practical Examples
+
+<CodeGroup>
+```bash Simple Throughput Test
+# Test queries per second (QPS)
+echo "SELECT 1" | clickhouse-benchmark \
+  --iterations=10000 \
+  --concurrency=10 \
+  --delay=1
+```
+
+```bash Latency Analysis
+# Measure query latency percentiles
+echo "SELECT count() FROM system.numbers LIMIT 1000000" | clickhouse-benchmark \
+  --iterations=1000 \
+  --concurrency=1
+```
+
+```bash Load Testing
+# Simulate production load
+cat production_queries.txt | clickhouse-benchmark \
+  --concurrency=50 \
+  --timelimit=300 \
+  --randomize \
+  --delay=10
+```
+
+```bash Stress Testing
+# Maximum load test
+echo "SELECT count() FROM large_table" | clickhouse-benchmark \
+  --concurrency=100 \
+  --timelimit=60 \
+  --ignore-error
+```
+</CodeGroup>
+
+## Advanced Scenarios
+
+### Comparing Different Hosts
+
+```bash
+# Compare performance across hosts (NOT round-robin)
+echo "SELECT count() FROM table" | clickhouse-benchmark \
+  --host server1.example.com \
+  --host server2.example.com \
+  --concurrency=10 \
+  --iterations=1000
+
+# Each host gets separate statistics
+```
+
+### Gradual Concurrency Increase
+
+```bash
+# Start with 1 query, increase to 50
+# Reports every 5 seconds with each concurrency level
+echo "SELECT expensive_query() FROM table" | clickhouse-benchmark \
+  --concurrency=1 \
+  --max_concurrency=50 \
+  --delay=5 \
+  --timelimit=300
+```
+
+### Database and Quota Testing
+
+```bash
+# Test specific database
+echo "SELECT count() FROM users" | clickhouse-benchmark \
+  --database=analytics \
+  --user=analyst
+
+# Test with quota key
+echo "SELECT 1" | clickhouse-benchmark \
+  --quota_key=team_analytics \
+  --concurrency=20
+```
+
+## Reading Benchmark Output
+
+### Output Metrics
+
+The benchmark provides these metrics:
+
+- **Queries executed** - Total number of queries run
+- **QPS** - Queries per second
+- **RPS** - Rows per second (read from tables)
+- **MiB/s** - Megabytes per second (read from tables)
+- **Result RPS** - Result rows per second (returned to client)
+- **Result MiB/s** - Result megabytes per second
+- **Percentiles** - Latency distribution (0%, 10%, 20%, ..., 99.99%)
+- **T-test results** - Statistical comparison between hosts
+
+### Example Output
+
+```
+Loaded 3 queries.
+
+Queries executed: 1000 (100.0%).
+
+localhost:9000, queries: 1000, QPS: 145.234, RPS: 14523400.123, MiB/s: 110.567, result RPS: 1000.000, result MiB/s: 0.008.
+
+0%      0.003 sec.
+10%     0.005 sec.
+20%     0.006 sec.
+30%     0.006 sec.
+40%     0.007 sec.
+50%     0.007 sec.
+60%     0.007 sec.
+70%     0.008 sec.
+80%     0.008 sec.
+90%     0.009 sec.
+95%     0.010 sec.
+99%     0.015 sec.
+99.9%   0.025 sec.
+99.99%  0.050 sec.
+```
+
+## Configuration File
+
+Example config for `clickhouse-benchmark`:
+
+```xml
+<config>
+    <openSSL>
+        <client>
+            <loadDefaultCAFile>true</loadDefaultCAFile>
+            <cacheSessions>true</cacheSessions>
+        </client>
+    </openSSL>
+    
+    <connections_credentials>
+        <connection>
+            <name>production</name>
+            <hostname>prod.example.com</hostname>
+            <port>9440</port>
+            <secure>1</secure>
+            <user>benchmark</user>
+            <password>secret</password>
+        </connection>
+    </connections_credentials>
+</config>
+```
+
+## Debugging and Troubleshooting
+
+```bash
+# Enable stack traces
+echo "SELECT problematic_query()" | clickhouse-benchmark --stacktrace
+
+# Verbose output (when using --help --verbose)
+clickhouse-benchmark --help --verbose
+
+# Test connection only
+echo "SELECT 1" | clickhouse-benchmark --iterations=1
+```
+
+## Common Use Cases
+
+<CodeGroup>
+```bash Query Optimization
+# Compare query performance
+cat > queries.txt << EOF
+SELECT count() FROM table WHERE date >= today() - 7
+SELECT count() FROM table WHERE date >= today() - 7 AND user_id > 1000
+EOF
+
+clickhouse-benchmark < queries.txt --iterations=100
+```
+
+```bash Capacity Planning
+# Determine maximum QPS
+echo "SELECT * FROM users LIMIT 100" | clickhouse-benchmark \
+  --concurrency=1 \
+  --max_concurrency=100 \
+  --delay=10 \
+  --timelimit=600
+```
+
+```bash Regression Testing
+# Compare versions
+echo "SELECT sum(number) FROM numbers(10000000)" | clickhouse-benchmark \
+  --host old-version.internal \
+  --host new-version.internal \
+  --iterations=1000
+```
+</CodeGroup>
+
+## Best Practices
+
+1. **Warm-up Period**: Run benchmark queries before measuring to warm up caches
+2. **Realistic Queries**: Use production-like queries for accurate results
+3. **Multiple Runs**: Run benchmarks multiple times and compare results
+4. **Isolation**: Run benchmarks on isolated servers when possible
+5. **Monitoring**: Monitor system resources (CPU, memory, I/O) during benchmarks
+6. **Query Variation**: Use `--randomize` with multiple queries for realistic load
+7. **Gradual Load**: Use `--max_concurrency` to find the breaking point
+
+## Exit Codes
+
+- `0` - Successful completion
+- `1` - Error occurred (query failure, connection issue)
+
+## See Also
+
+- [clickhouse-client](/tools/clickhouse-client) - Interactive SQL client
+- [clickhouse-local](/tools/clickhouse-local) - Local query processing
+- [Performance Testing](/performance/benchmarks) - Performance testing guide
+- [Query Profiling](/performance/query-tuning) - Query optimization

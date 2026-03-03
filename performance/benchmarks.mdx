@@ -1,0 +1,479 @@
+---
+title: Performance Benchmarks
+description: Benchmark results, methodologies, and testing tools for ClickHouse
+---
+
+## Overview
+
+Benchmarking ClickHouse correctly requires understanding the built-in tools and methodologies. This guide covers official benchmarks and how to run your own performance tests.
+
+## Official Benchmarks
+
+### ClickBench
+
+ClickBench is the official ClickHouse benchmark comparing performance across different database systems.
+
+**Repository:** https://github.com/ClickHouse/ClickBench
+
+From `benchmark/README.md` in the source:
+```bash
+# The benchmark has moved to a separate repository
+https://github.com/ClickHouse/ClickBench
+```
+
+**What it tests:**
+- Real-world analytical queries
+- Large dataset operations (100M+ rows)
+- Aggregations, filters, and joins
+- Compression efficiency
+- Query latency at various percentiles
+
+**Public results:** https://clickhouse.com/benchmark/
+
+### Hardware Benchmark
+
+Test raw hardware performance without ClickHouse installation:
+
+```bash
+# Download the hardware test script
+wget https://raw.githubusercontent.com/ClickHouse/ClickBench/main/hardware/hardware.sh
+
+# Make it executable
+chmod a+x ./hardware.sh
+
+# Run the benchmark
+./hardware.sh
+```
+
+From `docs/en/operations/performance-test.md`, this tests:
+- CPU computational performance
+- Memory bandwidth
+- Storage I/O throughput
+- Compression/decompression speed
+
+**Submit results:** Send output to feedback@clickhouse.com
+
+**View all results:** https://clickhouse.com/benchmark/hardware/
+
+<Tip>
+Run the hardware benchmark before deploying ClickHouse to validate your infrastructure meets performance expectations.
+</Tip>
+
+## clickhouse-benchmark Tool
+
+### Overview
+
+The `clickhouse-benchmark` utility (from `programs/benchmark/` and `docs/en/operations/utilities/clickhouse-benchmark.md`) connects to ClickHouse and repeatedly executes queries to measure performance.
+
+### Basic Usage
+
+**Single query test:**
+```bash
+clickhouse-benchmark --query "SELECT count() FROM system.numbers LIMIT 10000000"
+```
+
+**Multiple queries from file:**
+```bash
+cat > queries.sql << EOF
+SELECT * FROM system.numbers LIMIT 10000000;
+SELECT 1;
+EOF
+
+clickhouse-benchmark < queries.sql
+```
+
+**From stdin:**
+```bash
+echo "SELECT count() FROM events WHERE event_date = today()" | clickhouse-benchmark
+```
+
+### Command-Line Options
+
+#### Concurrency Control
+
+```bash
+# Run 8 queries in parallel
+clickhouse-benchmark --concurrency 8 --iterations 100 < queries.sql
+
+# Gradually increase concurrency
+clickhouse-benchmark --max_concurrency 16 --iterations 1000 < queries.sql
+```
+
+#### Time Limits
+
+```bash
+# Run for 60 seconds
+clickhouse-benchmark --timelimit 60 --query "SELECT count() FROM large_table"
+
+# Specific number of iterations
+clickhouse-benchmark --iterations 1000 --query "SELECT 1"
+```
+
+#### Reporting
+
+```bash
+# Report every 5 seconds
+clickhouse-benchmark --delay 5 --iterations 100 < queries.sql
+
+# Cumulative reporting
+clickhouse-benchmark --cumulative --iterations 100 < queries.sql
+
+# Disable intermediate reports
+clickhouse-benchmark --delay 0 --iterations 100 < queries.sql
+```
+
+### Output Metrics
+
+From the documentation, `clickhouse-benchmark` reports:
+
+```text
+Queries executed: 10.
+
+localhost:9000, queries 10, QPS: 6.772, RPS: 67904487.440, MiB/s: 518.070, 
+result RPS: 67721584.984, result MiB/s: 516.675.
+
+0.000%      0.145 sec.
+10.000%     0.146 sec.
+20.000%     0.146 sec.
+...
+99.990%     0.150 sec.
+```
+
+**Metrics explained:**
+- **QPS** - Queries Per Second
+- **RPS** - Rows read Per Second
+- **MiB/s** - Megabytes read Per Second
+- **result RPS** - Rows returned Per Second
+- **result MiB/s** - Megabytes returned Per Second
+- **Percentiles** - Query execution time distribution
+
+### Comparison Mode
+
+Compare performance between two ClickHouse instances:
+
+```bash
+clickhouse-benchmark \
+  --host localhost --port 9001 \
+  --host localhost --port 9000 \
+  --iterations 10 \
+  --query "SELECT * FROM system.numbers LIMIT 10000000 OFFSET 10000000"
+```
+
+**Output:**
+```text
+localhost:9001, queries 2, QPS: 3.764, RPS: 75446929.370, MiB/s: 575.614
+localhost:9000, queries 3, QPS: 3.815, RPS: 76466659.385, MiB/s: 583.394
+
+No difference proven at 99.5% confidence
+```
+
+The tool performs an Independent two-sample Student's t-test to determine statistical significance.
+
+### Advanced Options
+
+```bash
+# Randomize query order
+clickhouse-benchmark --randomize < queries.sql
+
+# Control reconnection
+clickhouse-benchmark --reconnect 10  # Reconnect every 10 queries
+
+# Continue on errors
+clickhouse-benchmark --ignore-error < queries.sql
+
+# Set custom settings
+clickhouse-benchmark --max_memory_usage=10000000000 < queries.sql
+
+# Measure client-side time (including network)
+clickhouse-benchmark --client-side-time < queries.sql
+```
+
+## Performance Testing Methodologies
+
+### Insert Performance Testing
+
+**Batch insert benchmark:**
+```bash
+# Generate test data
+clickhouse-client --query "CREATE TABLE test_inserts (
+    id UInt64,
+    timestamp DateTime,
+    value Float64
+) ENGINE = MergeTree ORDER BY (id, timestamp)"
+
+# Benchmark inserts
+for i in {1..100}; do
+  clickhouse-client --query "INSERT INTO test_inserts 
+    SELECT number, now(), rand() 
+    FROM numbers(1000000)"
+done
+
+# Check insert rate
+clickhouse-client --query "SELECT 
+    count() / dateDiff('second', min(timestamp), max(timestamp)) as rows_per_sec
+  FROM test_inserts"
+```
+
+### Query Performance Testing
+
+**Create a representative query set:**
+```sql
+-- queries.sql
+SELECT user_id, count() FROM events WHERE event_date = today() GROUP BY user_id;
+SELECT event_type, avg(value) FROM events WHERE timestamp > now() - INTERVAL 1 HOUR GROUP BY event_type;
+SELECT count() FROM events WHERE user_id IN (SELECT user_id FROM users WHERE segment = 'premium');
+```
+
+**Run benchmark:**
+```bash
+clickhouse-benchmark \
+  --concurrency 8 \
+  --iterations 100 \
+  --delay 1 \
+  < queries.sql
+```
+
+### Merge Performance Testing
+
+**Monitor merge performance:**
+```sql
+-- Create test table with many parts
+CREATE TABLE merge_test (
+    id UInt64,
+    data String
+) ENGINE = MergeTree ORDER BY id
+SETTINGS 
+    parts_to_delay_insert = 1000,
+    parts_to_throw_insert = 10000;
+
+-- Insert many small parts
+INSERT INTO merge_test SELECT number, toString(number) FROM numbers(10000);
+-- Repeat 100 times to create 100 parts
+
+-- Force merge and time it
+SELECT now() as start_time;
+OPTIMIZE TABLE merge_test FINAL;
+SELECT now() as end_time;
+
+-- Check merge statistics
+SELECT 
+    table,
+    elapsed,
+    progress,
+    num_parts,
+    result_part_name,
+    total_size_bytes_compressed,
+    bytes_read_uncompressed,
+    bytes_written_uncompressed,
+    rows_read,
+    rows_written
+FROM system.merges
+WHERE table = 'merge_test';
+```
+
+## Benchmark Results Interpretation
+
+### Understanding QPS (Queries Per Second)
+
+**Good QPS depends on query complexity:**
+- Simple aggregations: 1000+ QPS
+- Medium complexity joins: 100-500 QPS  
+- Complex analytical queries: 10-100 QPS
+- Heavy aggregations on large datasets: 1-10 QPS
+
+### Understanding Latency Percentiles
+
+**From clickhouse-benchmark output:**
+```text
+50.000%     0.148 sec.  -- Median (P50)
+95.000%     0.150 sec.  -- 95th percentile
+99.000%     0.150 sec.  -- 99th percentile
+```
+
+<Tip>
+Focus on P95 and P99 latencies for user-facing applications. These represent worst-case user experience better than averages.
+</Tip>
+
+### Understanding Throughput
+
+**RPS (Rows Per Second) interpretation:**
+- Full table scans: 100M+ RPS possible on good hardware
+- Filtered queries: 10M-100M RPS typical
+- Join queries: 1M-10M RPS depending on complexity
+
+**MiB/s (Megabytes Per Second):**
+- Limited by storage bandwidth (NVMe: 3000+ MB/s)
+- Limited by network (10 Gbps = 1250 MB/s)
+- Actual: Usually 200-1000 MB/s in practice
+
+## Custom Benchmark Scenarios
+
+### Time Series Workload
+
+```bash
+cat > timeseries_queries.sql << 'EOF'
+SELECT toStartOfMinute(timestamp), avg(value) FROM metrics WHERE timestamp > now() - INTERVAL 1 HOUR GROUP BY 1;
+SELECT metric_name, max(value) FROM metrics WHERE timestamp > now() - INTERVAL 5 MINUTE GROUP BY metric_name;
+SELECT count() FROM metrics WHERE value > 100 AND timestamp > now() - INTERVAL 15 MINUTE;
+EOF
+
+clickhouse-benchmark \
+  --concurrency 16 \
+  --timelimit 300 \
+  --randomize \
+  < timeseries_queries.sql
+```
+
+### OLAP Workload
+
+```bash
+cat > olap_queries.sql << 'EOF'
+SELECT product_category, sum(revenue) FROM sales GROUP BY product_category ORDER BY 2 DESC LIMIT 10;
+SELECT date, count(DISTINCT customer_id) FROM orders WHERE date >= today() - 30 GROUP BY date;
+SELECT region, product, sum(quantity) FROM sales WHERE date >= '2024-01-01' GROUP BY region, product;
+EOF
+
+clickhouse-benchmark \
+  --concurrency 4 \
+  --iterations 100 \
+  --cumulative \
+  < olap_queries.sql
+```
+
+### High Concurrency Test
+
+```bash
+# Test system under high load
+clickhouse-benchmark \
+  --query "SELECT count() FROM large_table WHERE user_id = {user_id}" \
+  --max_concurrency 128 \
+  --timelimit 300
+```
+
+## Monitoring During Benchmarks
+
+### System Metrics
+
+**In another terminal while benchmark runs:**
+```sql
+-- CPU usage
+SELECT 
+    event_time,
+    ProfileEvent_OSCPUVirtualTimeMicroseconds / 1000000 as cpu_seconds
+FROM system.metric_log
+WHERE event_time > now() - INTERVAL 5 MINUTE
+ORDER BY event_time DESC
+LIMIT 10;
+
+-- Memory usage
+SELECT 
+    metric,
+    value / 1024 / 1024 / 1024 as value_gb
+FROM system.metrics
+WHERE metric IN ('MemoryTracking', 'MemoryResident')
+ORDER BY metric;
+
+-- Active queries
+SELECT 
+    query_id,
+    elapsed,
+    read_rows,
+    memory_usage / 1024 / 1024 as memory_mb,
+    query
+FROM system.processes
+ORDER BY elapsed DESC;
+```
+
+### Query Performance
+
+```sql
+-- Recent slow queries
+SELECT 
+    query_duration_ms,
+    read_rows,
+    read_bytes / 1024 / 1024 as read_mb,
+    memory_usage / 1024 / 1024 as memory_mb,
+    query
+FROM system.query_log
+WHERE type = 'QueryFinish'
+  AND event_time > now() - INTERVAL 5 MINUTE
+ORDER BY query_duration_ms DESC
+LIMIT 10;
+```
+
+## Performance Baselines
+
+### Expected Performance by Hardware Class
+
+**Entry-level (8 cores, 32GB RAM, SATA SSD):**
+- Simple aggregations: 100-500 QPS
+- Scan throughput: 20-50M rows/sec
+- Insert rate: 100K-500K rows/sec
+
+**Mid-range (16 cores, 128GB RAM, NVMe):**
+- Simple aggregations: 500-2000 QPS
+- Scan throughput: 100-300M rows/sec  
+- Insert rate: 1M-5M rows/sec
+
+**High-end (32+ cores, 256GB+ RAM, NVMe RAID):**
+- Simple aggregations: 2000-10000 QPS
+- Scan throughput: 500M-2B rows/sec
+- Insert rate: 5M-20M rows/sec
+
+<Tip>
+These are approximate ranges. Actual performance depends heavily on query complexity, data characteristics, and table design.
+</Tip>
+
+## Best Practices
+
+1. **Use realistic queries** - Benchmark with actual production query patterns
+2. **Warm up first** - Run queries once before measuring to populate caches
+3. **Test at scale** - Use production-sized datasets
+4. **Vary concurrency** - Test from 1 to max expected concurrent users
+5. **Monitor resources** - Watch CPU, memory, and I/O during tests
+6. **Multiple runs** - Run benchmarks 3+ times and average results
+7. **Document configuration** - Record all settings and hardware specs
+8. **Use comparison mode** - Test before/after changes scientifically
+
+## Common Pitfalls
+
+### Cache Effects
+
+**Problem:** First query slow, subsequent queries fast
+
+**Solution:**
+```bash
+# Restart ClickHouse between test runs
+sudo systemctl restart clickhouse-server
+
+# Or drop caches
+SYSTEM DROP MARK CACHE;
+SYSTEM DROP UNCOMPRESSED CACHE;
+```
+
+### Network Bottlenecks
+
+**Problem:** Low throughput despite good server performance
+
+**Solution:**
+```bash
+# Use --client-side-time to measure network impact
+clickhouse-benchmark --client-side-time < queries.sql
+
+# Run benchmark from same datacenter as server
+```
+
+### Resource Contention
+
+**Problem:** Inconsistent results
+
+**Solution:**
+- Stop other workloads during benchmark
+- Disable background merges temporarily if testing queries only
+- Use dedicated test servers
+
+## Related Topics
+
+- [Optimization Strategies](/performance/optimization) for improving benchmark scores
+- [Query Tuning](/performance/query-tuning) for optimizing specific queries
+- [Hardware Recommendations](/performance/hardware) for infrastructure planning

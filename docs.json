@@ -1,122 +1,192 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "ClickHouse",
+  "theme": "sequoia",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#FFCC00",
+    "light": "#FFF4CC",
+    "dark": "#CC9900"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/clickhouse/clickhouse"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/clickhouse/clickhouse"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation",
+              "tutorial"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Architecture",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "architecture/overview",
+              "architecture/data-storage",
+              "architecture/query-execution",
+              "architecture/distributed-queries",
+              "architecture/replication"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "SQL Reference",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "sql/syntax",
+              "sql/statements",
+              "sql/select",
+              "sql/insert",
+              "sql/alter",
+              "sql/operators",
+              "sql/data-types"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Table Engines",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "engines/overview",
+              "engines/mergetree-family",
+              "engines/log-family",
+              "engines/integrations",
+              "engines/special"
+            ]
+          },
+          {
+            "group": "Database Engines",
+            "pages": [
+              "databases/overview",
+              "databases/atomic",
+              "databases/replicated",
+              "databases/materialized"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/server-settings",
+              "operations/access-rights",
+              "operations/backup-restore",
+              "operations/monitoring",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "performance/optimization",
+              "performance/query-tuning",
+              "performance/hardware",
+              "performance/benchmarks"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/data-formats",
+              "integration/client-libraries",
+              "integration/kafka",
+              "integration/mysql",
+              "integration/postgresql"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/building",
+              "development/contributing",
+              "development/architecture",
+              "development/testing"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Functions",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "functions/overview"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Aggregate Functions",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "functions/aggregate/overview",
+              "functions/aggregate/standard",
+              "functions/aggregate/combinators",
+              "functions/aggregate/parametric"
+            ]
+          },
+          {
+            "group": "Regular Functions",
+            "pages": [
+              "functions/arithmetic",
+              "functions/comparison",
+              "functions/logical",
+              "functions/type-conversion",
+              "functions/string",
+              "functions/array",
+              "functions/date-time",
+              "functions/json",
+              "functions/hash",
+              "functions/geo"
+            ]
+          },
+          {
+            "group": "Table Functions",
+            "pages": [
+              "functions/table/overview",
+              "functions/table/file",
+              "functions/table/url",
+              "functions/table/remote"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tools",
+        "groups": [
+          {
+            "group": "Command Line",
+            "pages": [
+              "tools/clickhouse-client",
+              "tools/clickhouse-local",
+              "tools/clickhouse-benchmark"
+            ]
+          },
+          {
+            "group": "ClickHouse Keeper",
+            "pages": [
+              "tools/keeper/overview",
+              "tools/keeper/configuration",
+              "tools/keeper/operations"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "tools/compressor",
+              "tools/format",
+              "tools/obfuscator"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

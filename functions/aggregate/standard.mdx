@@ -1,0 +1,543 @@
+---
+title: Standard Aggregate Functions
+description: Reference for standard aggregate functions in ClickHouse
+---
+
+Standard aggregate functions perform common statistical and mathematical operations. These functions are implemented in `~/workspace/source/src/AggregateFunctions/`.
+
+## Counting Functions
+
+<Accordion title="count">
+
+**Signature**: `count([expr])`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionCount.cpp:254`
+
+Counts the number of rows or not-NULL values.
+
+**Syntax variants**:
+- `count()` or `count(*)` - count all rows
+- `count(expr)` - count non-NULL values
+- `COUNT(DISTINCT expr)` - count distinct values (uses `uniqExact` by default)
+
+**Return type**: `UInt64`
+
+**Examples**:
+
+```sql
+-- Count all rows
+SELECT count() FROM users;
+┌─count()─┐
+│    1523 │
+└─────────┘
+
+-- Count non-NULL values
+SELECT count(email) FROM users;
+┌─count(email)─┐
+│         1450 │
+└──────────────┘
+
+-- Count distinct values
+SELECT COUNT(DISTINCT country) FROM users;
+┌─uniqExact(country)─┐
+│                 42 │
+└────────────────────┘
+```
+
+**Performance notes**:
+- `count()` on MergeTree tables uses metadata (controlled by `optimize_trivial_count_query`)
+- `count(nullable_column)` can be optimized with `optimize_functions_to_subcolumns = 1`
+- `COUNT(DISTINCT)` implementation set by `count_distinct_implementation` setting
+
+</Accordion>
+
+## Sum Functions
+
+<Accordion title="sum">
+
+**Signature**: `sum(num)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionSum.cpp:73`
+
+Calculates the sum of numeric values.
+
+**Arguments**:
+- `num` - Column of numeric values: `(U)Int*`, `Float*`, `Decimal*`
+
+**Return type**: Automatically promoted to prevent overflow
+- `Int8`/`Int16`/`Int32` → `Int64`
+- `UInt8`/`UInt16`/`UInt32` → `UInt64`
+- `Float32` → `Float32`
+- `Float64` → `Float64`
+- `Decimal32`/`Decimal64` → `Decimal128`
+- `Decimal128`/`Decimal256` → `Decimal256`
+
+**Example**:
+
+```sql
+CREATE TABLE employees (
+    id UInt32,
+    name String,
+    salary UInt32
+) ENGINE = Memory;
+
+INSERT INTO employees VALUES
+    (87432, 'John Smith', 45680),
+    (59018, 'Jane Smith', 72350),
+    (20376, 'Ivan Ivanovich', 58900),
+    (71245, 'Anastasia Ivanovna', 89210);
+
+SELECT sum(salary) FROM employees;
+┌─sum(salary)─┐
+│      266140 │
+└─────────────┘
+```
+
+</Accordion>
+
+<Accordion title="sumWithOverflow">
+
+**Signature**: `sumWithOverflow(num)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionSum.cpp:173`
+
+Computes sum using the same data type for result as input. If overflow occurs, wraps around.
+
+**Arguments**:
+- `num` - Column of numeric values: `(U)Int*`, `Float*`, `Decimal*`
+
+**Return type**: Same as input type
+
+**Example**:
+
+```sql
+CREATE TABLE employees (
+    id UInt32,
+    name String,
+    monthly_salary UInt16
+) ENGINE = Memory;
+
+INSERT INTO employees VALUES
+    (1, 'John', 20000),
+    (2, 'Jane', 18000),
+    (3, 'Bob', 12000),
+    (4, 'Alice', 10000),
+    (5, 'Charlie', 8000);
+
+SELECT
+    sum(monthly_salary) AS no_overflow,
+    sumWithOverflow(monthly_salary) AS overflow,
+    toTypeName(no_overflow),
+    toTypeName(overflow)
+FROM employees;
+┌─no_overflow─┬─overflow─┬─toTypeName(no_overflow)─┬─toTypeName(overflow)─┐
+│       68000 │     2464 │ UInt64                  │ UInt16               │
+└─────────────┴──────────┴─────────────────────────┴──────────────────────┘
+```
+
+</Accordion>
+
+<Accordion title="sumKahan">
+
+**Signature**: `sumKahan(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionSum.cpp:206`
+
+Calculates sum using [Kahan compensated summation algorithm](https://en.wikipedia.org/wiki/Kahan_summation_algorithm) for improved floating-point precision.
+
+**Arguments**:
+- `x` - Input value: `Integer`, `Float`, `Decimal`
+
+**Return type**: `Float64` for floating-point inputs, appropriate integer type otherwise
+
+**Performance**: Slower than `sum`, but more accurate for floating-point.
+
+**Example**:
+
+```sql
+SELECT sum(0.1), sumKahan(0.1) FROM numbers(10);
+┌───────────sum(0.1)─┬─sumKahan(0.1)─┐
+│ 0.9999999999999999 │             1 │
+└────────────────────┴───────────────┘
+```
+
+</Accordion>
+
+## Average Functions
+
+<Accordion title="avg">
+
+**Signature**: `avg(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionAvg.cpp:91`
+
+Calculates the arithmetic mean.
+
+**Arguments**:
+- `x` - Input values: `(U)Int*`, `Float*`, `Decimal`, `Date`, `DateTime`
+
+**Return type**: 
+- `Float64` for numeric types
+- Same type for `Date`, `DateTime` (rounded to nearest integer)
+
+**Example**:
+
+```sql
+SELECT avg(x) FROM VALUES('x Int8', 0, 1, 2, 3, 4, 5);
+┌─avg(x)─┐
+│    2.5 │
+└────────┘
+
+-- Empty table returns NaN
+CREATE TABLE test (t UInt8) ENGINE = Memory;
+SELECT avg(t) FROM test;
+┌─avg(t)─┐
+│    nan │
+└────────┘
+```
+
+</Accordion>
+
+<Accordion title="avgWeighted">
+
+**Signature**: `avgWeighted(value, weight)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionAvgWeighted.cpp`
+
+Calculates weighted arithmetic mean.
+
+**Arguments**:
+- `value` - Values to average
+- `weight` - Weights for each value
+
+**Return type**: `Float64`
+
+**Example**:
+
+```sql
+SELECT avgWeighted(price, quantity) FROM (
+    VALUES('price Float64, quantity UInt32', (10.0, 5), (20.0, 3), (30.0, 2))
+);
+```
+
+</Accordion>
+
+## Min/Max Functions
+
+<Accordion title="min / max">
+
+**Signature**: `min(expr)`, `max(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionMinMaxAny.cpp`
+
+Returns the minimum or maximum value.
+
+**Arguments**:
+- `expr` - Expression of comparable type
+
+**Return type**: Same as input type
+
+**Example**:
+
+```sql
+SELECT min(salary), max(salary) FROM employees;
+┌─min(salary)─┬─max(salary)─┐
+│       45680 │       89210 │
+└─────────────┴─────────────┘
+```
+
+</Accordion>
+
+<Accordion title="any / anyLast">
+
+**Signature**: `any(column)`, `anyLast(column)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionAny.cpp`
+
+Returns an arbitrary value from the group. `any` returns the first encountered, `anyLast` returns the last.
+
+**Arguments**:
+- `column` - Column name
+
+**Return type**: Same as input type
+
+**Note**: The result is non-deterministic in distributed queries.
+
+**Example**:
+
+```sql
+SELECT any(name), anyLast(name) FROM employees;
+┌─any(name)──┬─anyLast(name)────────┐
+│ John Smith │ Anastasia Ivanovna   │
+└────────────┴──────────────────────┘
+```
+
+</Accordion>
+
+<Accordion title="anyHeavy">
+
+**Signature**: `anyHeavy(column)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionAnyHeavy.cpp`
+
+Returns a frequently occurring value using the [heavy hitters algorithm](http://www.cs.umd.edu/~samir/498/karp.pdf).
+
+**Arguments**:
+- `column` - Column name
+
+**Return type**: Same as input type
+
+**Example**:
+
+```sql
+SELECT anyHeavy(status) FROM requests;
+```
+
+</Accordion>
+
+## Statistical Functions
+
+<Accordion title="varPop / varSamp">
+
+**Signature**: `varPop(x)`, `varSamp(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionStatistics.cpp`
+
+Calculates population variance (`varPop`) or sample variance (`varSamp`).
+
+**Arguments**:
+- `x` - Numeric values
+
+**Return type**: `Float64`
+
+**Formula**:
+- `varPop` = `Σ(x - mean)² / n`
+- `varSamp` = `Σ(x - mean)² / (n - 1)`
+
+</Accordion>
+
+<Accordion title="stddevPop / stddevSamp">
+
+**Signature**: `stddevPop(x)`, `stddevSamp(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionStatistics.cpp`
+
+Calculates population standard deviation or sample standard deviation.
+
+**Return type**: `Float64`
+
+**Formula**:
+- `stddevPop` = `sqrt(varPop(x))`
+- `stddevSamp` = `sqrt(varSamp(x))`
+
+</Accordion>
+
+<Accordion title="covarPop / covarSamp">
+
+**Signature**: `covarPop(x, y)`, `covarSamp(x, y)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionCovar.cpp`
+
+Calculates population or sample covariance.
+
+**Arguments**:
+- `x`, `y` - Numeric values
+
+**Return type**: `Float64`
+
+</Accordion>
+
+<Accordion title="corr">
+
+**Signature**: `corr(x, y)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionCorr.cpp`
+
+Calculates Pearson correlation coefficient.
+
+**Arguments**:
+- `x`, `y` - Numeric values
+
+**Return type**: `Float64` (value between -1 and 1)
+
+**Example**:
+
+```sql
+SELECT corr(temperature, ice_cream_sales) FROM daily_data;
+```
+
+</Accordion>
+
+## Bitwise Aggregate Functions
+
+<Accordion title="groupBitAnd / groupBitOr / groupBitXor">
+
+**Signature**: `groupBitAnd(expr)`, `groupBitOr(expr)`, `groupBitXor(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionBitwise.cpp`
+
+Applies bitwise AND, OR, or XOR across all values.
+
+**Arguments**:
+- `expr` - Integer expression
+
+**Return type**: Same as input integer type
+
+**Example**:
+
+```sql
+SELECT groupBitOr(permissions) FROM user_groups WHERE user_id = 123;
+```
+
+</Accordion>
+
+## Array Collection Functions
+
+<Accordion title="groupArray">
+
+**Signature**: `groupArray(x)`, `groupArray(max_size)(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionGroupArray.cpp`
+
+Creates an array of values. Optional `max_size` parameter limits array size.
+
+**Arguments**:
+- `x` - Expression
+- `max_size` - Optional maximum array size
+
+**Return type**: `Array(T)` where T is the type of x
+
+**Example**:
+
+```sql
+SELECT groupArray(name) FROM employees;
+┌─groupArray(name)─────────────────────────────────────────────┐
+│ ['John Smith','Jane Smith','Ivan Ivanovich','Anastasia...'] │
+└──────────────────────────────────────────────────────────────┘
+
+-- Limit to 10 elements
+SELECT groupArray(10)(product_id) FROM recent_purchases;
+```
+
+</Accordion>
+
+<Accordion title="groupArrayLast">
+
+**Signature**: `groupArrayLast(max_size)(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionGroupArray.cpp`
+
+Creates an array of the last `max_size` values.
+
+**Arguments**:
+- `max_size` - Maximum array size (required)
+- `x` - Expression
+
+**Return type**: `Array(T)`
+
+</Accordion>
+
+<Accordion title="groupArraySample">
+
+**Signature**: `groupArraySample(max_size)(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionGroupArray.cpp`
+
+Creates an array of random sample values using reservoir sampling.
+
+**Arguments**:
+- `max_size` - Sample size (required)
+- `x` - Expression
+
+**Return type**: `Array(T)`
+
+</Accordion>
+
+<Accordion title="groupUniqArray">
+
+**Signature**: `groupUniqArray(x)`, `groupUniqArray(max_size)(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionGroupUniqArray.cpp`
+
+Creates an array of unique values.
+
+**Arguments**:
+- `x` - Expression
+- `max_size` - Optional maximum array size
+
+**Return type**: `Array(T)`
+
+**Example**:
+
+```sql
+SELECT groupUniqArray(country) FROM users;
+```
+
+</Accordion>
+
+## Distinct Counting Functions
+
+<Accordion title="uniq">
+
+**Signature**: `uniq(x)`, `uniq(x, y, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionUniq.cpp`
+
+Approximately counts distinct values using HyperLogLog algorithm.
+
+**Arguments**:
+- One or more expressions
+
+**Return type**: `UInt64`
+
+**Accuracy**: ~2% error for typical cardinalities
+
+**Example**:
+
+```sql
+SELECT uniq(user_id) FROM visits;
+SELECT uniq(user_id, session_id) FROM events;
+```
+
+</Accordion>
+
+<Accordion title="uniqExact">
+
+**Signature**: `uniqExact(x)`, `uniqExact(x, y, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionUniq.cpp`
+
+Exactly counts distinct values using a hash table.
+
+**Arguments**:
+- One or more expressions
+
+**Return type**: `UInt64`
+
+**Memory**: O(n) where n is the number of distinct values
+
+</Accordion>
+
+<Accordion title="uniqCombined">
+
+**Signature**: `uniqCombined(HLL_precision)(x)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionUniqCombined.cpp`
+
+Counts distinct values using combination of array, hash table, and HyperLogLog.
+
+**Arguments**:
+- `HLL_precision` - Optional HyperLogLog precision (9-18, default 17)
+- `x` - Expression
+
+**Return type**: `UInt64`
+
+**Performance**: Better than `uniq` for many use cases
+
+</Accordion>
+
+## See Also
+
+- [Aggregate Functions Overview](./overview) - Introduction and concepts
+- [Function Combinators](./combinators) - Modify function behavior with suffixes
+- [Parametric Aggregate Functions](./parametric) - Functions with parameters

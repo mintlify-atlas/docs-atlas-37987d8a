@@ -1,0 +1,505 @@
+---
+title: Integration Engines
+description: Connect ClickHouse to external databases and message queues
+---
+
+Integration engines allow ClickHouse to query external data sources and integrate with message queues. These engines enable real-time data ingestion, federated queries, and ETL pipelines.
+
+## MySQL
+
+Query MySQL databases directly from ClickHouse (`src/Storages/StorageMySQL.h:24-26`).
+
+### Syntax
+
+```sql
+CREATE TABLE mysql_table (
+    id UInt64,
+    name String,
+    created DateTime
+) ENGINE = MySQL(
+    'host:port',
+    'database',
+    'table',
+    'user',
+    'password'
+);
+```
+
+### Parameters
+
+From `src/Storages/StorageMySQL.h:59-79`:
+
+- **host**: MySQL server hostname
+- **port**: MySQL port (default: 3306)
+- **database**: MySQL database name
+- **table**: MySQL table name
+- **username**: MySQL user (default: 'default')
+- **password**: MySQL password
+- **ssl_ca**: SSL certificate authority (optional)
+- **ssl_cert**: SSL certificate (optional)
+- **ssl_key**: SSL key (optional)
+- **replace_query**: Use REPLACE instead of INSERT (line 74)
+- **on_duplicate_clause**: ON DUPLICATE KEY clause (line 75)
+
+### Connection Pooling
+
+From `src/Storages/StorageMySQL.h:30-32`:
+
+```sql
+-- Uses mysqlxx::PoolWithFailover for connections
+-- Automatic failover to replica addresses
+```
+
+### Use Cases
+
+- Migrate data from MySQL to ClickHouse
+- Join ClickHouse data with MySQL tables
+- Real-time analytics on MySQL data
+- Hybrid OLTP/OLAP queries
+
+### Example
+
+```sql
+CREATE TABLE users_mysql (
+    user_id UInt64,
+    username String,
+    email String,
+    created_at DateTime
+) ENGINE = MySQL(
+    'mysql-server:3306',
+    'production',
+    'users',
+    'clickhouse_user',
+    'secure_password'
+);
+
+-- Query MySQL data from ClickHouse
+SELECT 
+    toYYYYMM(created_at) AS month,
+    count() AS new_users
+FROM users_mysql
+WHERE created_at >= today() - INTERVAL 30 DAY
+GROUP BY month;
+
+-- Join with ClickHouse table
+SELECT 
+    u.username,
+    count(e.event_id) AS event_count
+FROM users_mysql u
+JOIN clickhouse_events e ON u.user_id = e.user_id
+GROUP BY u.username
+ORDER BY event_count DESC
+LIMIT 10;
+```
+
+<Accordion title="MySQL Settings">
+  Additional configuration options:
+  
+  - Connection timeout
+  - Read/write timeouts
+  - Connection pool size
+  - Failover replica addresses
+  - SSL configuration
+</Accordion>
+
+### Write Support
+
+From `src/Storages/StorageMySQL.h:57`:
+
+```sql
+-- Insert into MySQL
+INSERT INTO users_mysql VALUES (1, 'alice', 'alice@example.com', now());
+
+-- Use REPLACE mode
+CREATE TABLE mysql_replace ENGINE = MySQL(...) 
+SETTINGS replace_query = 1;
+```
+
+## PostgreSQL
+
+Query PostgreSQL databases (`src/Storages/StoragePostgreSQL.h:25`).
+
+### Syntax
+
+```sql
+CREATE TABLE postgres_table (
+    id UInt64,
+    data String,
+    timestamp DateTime
+) ENGINE = PostgreSQL(
+    'host:port',
+    'database',
+    'table',
+    'user',
+    'password',
+    'schema',
+    'on_conflict'
+);
+```
+
+### Parameters
+
+From `src/Storages/StoragePostgreSQL.h:55-68`:
+
+- **host**: PostgreSQL server hostname
+- **port**: PostgreSQL port (default: 5432)
+- **database**: PostgreSQL database name
+- **table**: PostgreSQL table name
+- **username**: PostgreSQL user (default: 'default')
+- **password**: PostgreSQL password
+- **schema**: PostgreSQL schema (default: 'public', line 63)
+- **on_conflict**: ON CONFLICT clause for inserts (line 64)
+
+### Connection Pooling
+
+From `src/Storages/StoragePostgreSQL.h:28-30`:
+
+```sql
+-- Uses postgres::PoolWithFailover
+-- Supports multiple replica addresses
+```
+
+### Example
+
+```sql
+CREATE TABLE orders_postgres (
+    order_id UInt64,
+    customer_id UInt64,
+    amount Decimal(10,2),
+    status String,
+    created_at DateTime
+) ENGINE = PostgreSQL(
+    'postgres-server:5432',
+    'sales',
+    'orders',
+    'readonly_user',
+    'password123',
+    'public'
+);
+
+-- Analytics query
+SELECT 
+    status,
+    count() AS order_count,
+    sum(amount) AS total_amount
+FROM orders_postgres
+WHERE created_at >= today()
+GROUP BY status;
+```
+
+### Write Support
+
+```sql
+-- Insert with conflict resolution
+CREATE TABLE products_pg ENGINE = PostgreSQL(
+    'localhost:5432',
+    'inventory',
+    'products',
+    'writer',
+    'pass',
+    'public',
+    'DO UPDATE SET updated_at = EXCLUDED.updated_at'
+);
+
+INSERT INTO products_pg VALUES (1, 'Product A', now());
+```
+
+## MongoDB
+
+Read data from MongoDB collections (`src/Storages/StorageMongoDB.h:57-60`).
+
+### Syntax
+
+```sql
+-- Method 1: Connection parameters
+CREATE TABLE mongo_table (
+    _id String,
+    field1 String,
+    field2 UInt64
+) ENGINE = MongoDB(
+    'host:port',
+    'database',
+    'collection',
+    'user',
+    'password',
+    'options',
+    'oid_columns'
+);
+
+-- Method 2: MongoDB URI
+CREATE TABLE mongo_table (
+    _id String,
+    data String
+) ENGINE = MongoDB(
+    'mongodb://user:password@host:port/database?options',
+    'collection',
+    '_id'
+);
+```
+
+### Parameters
+
+From `src/Storages/StorageMongoDB.h:43-55`:
+
+- **uri**: MongoDB connection URI (line 45)
+- **collection**: MongoDB collection name (line 46)
+- **oid_fields**: Columns to treat as ObjectId (default: `_id`, line 47)
+
+### ObjectId Handling
+
+From `src/Storages/StorageMongoDB.h:51-54`:
+
+```sql
+-- Specify ObjectId columns
+CREATE TABLE mongo_data (
+    _id String,        -- Treated as ObjectId
+    user_id String,    -- Treated as ObjectId
+    name String
+) ENGINE = MongoDB(
+    'mongodb://localhost:27017/db',
+    'users',
+    '_id,user_id'  -- ObjectId columns
+);
+```
+
+### Use Cases
+
+- Analytics on MongoDB data
+- Data migration from MongoDB
+- Real-time reporting
+- Cross-database joins
+
+### Example
+
+```sql
+CREATE TABLE events_mongo (
+    _id String,
+    user_id UInt64,
+    event_type String,
+    timestamp DateTime,
+    metadata String
+) ENGINE = MongoDB(
+    'mongodb://mongo-server:27017/analytics',
+    'events',
+    '_id'
+);
+
+-- Query MongoDB from ClickHouse
+SELECT 
+    event_type,
+    count() AS event_count,
+    uniq(user_id) AS unique_users
+FROM events_mongo
+WHERE timestamp >= today() - INTERVAL 7 DAY
+GROUP BY event_type
+ORDER BY event_count DESC;
+```
+
+<Accordion title="MongoDB Instance Management">
+  From `src/Storages/StorageMongoDB.h:27-41`:
+  
+  MongoDB C++ driver requires a singleton instance:
+  - `MongoDBInstanceHolder` ensures single instance (line 33)
+  - Thread-safe initialization
+  - Lives for entire process lifetime
+</Accordion>
+
+### Read-Only
+
+From `src/Storages/StorageMongoDB.h:60-61`:
+
+<Warning>
+  MongoDB engine is **read-only**. Use MongoDB native tools or drivers for writes.
+</Warning>
+
+## Kafka
+
+Consume messages from Kafka topics (`src/Storages/Kafka/StorageKafka.h:33-35`).
+
+### Syntax
+
+```sql
+CREATE TABLE kafka_table (
+    timestamp DateTime,
+    message String,
+    user_id UInt64
+) ENGINE = Kafka()
+SETTINGS 
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list = 'topic1,topic2',
+    kafka_group_name = 'clickhouse_consumer',
+    kafka_format = 'JSONEachRow',
+    kafka_num_consumers = 2;
+```
+
+### Key Settings
+
+From `src/Storages/Kafka/StorageKafka.h:42-100`:
+
+- **kafka_broker_list**: Comma-separated broker addresses
+- **kafka_topic_list**: Topics to consume
+- **kafka_group_name**: Consumer group ID
+- **kafka_format**: Message format (JSONEachRow, CSV, etc.)
+- **kafka_num_consumers**: Number of consumer threads
+- **kafka_max_block_size**: Rows per block
+- **kafka_skip_broken_messages**: Skip parse errors
+- **kafka_commit_every_batch**: Auto-commit behavior
+
+### Message Queue Behavior
+
+From `src/Storages/Kafka/StorageKafka.h:54-56`:
+
+```sql
+-- Kafka is a message queue
+-- isMessageQueue() = true (line 54)
+-- noPushingToViewsOnInserts() = true (line 56)
+```
+
+### Use Cases
+
+- Real-time data ingestion
+- Stream processing
+- Event-driven architectures
+- ETL pipelines
+
+### Example: Real-time Analytics
+
+```sql
+-- 1. Create Kafka engine table
+CREATE TABLE events_kafka (
+    event_time DateTime,
+    event_type String,
+    user_id UInt64,
+    properties String
+) ENGINE = Kafka()
+SETTINGS 
+    kafka_broker_list = 'kafka1:9092,kafka2:9092',
+    kafka_topic_list = 'events',
+    kafka_group_name = 'clickhouse_events',
+    kafka_format = 'JSONEachRow',
+    kafka_num_consumers = 4,
+    kafka_thread_per_consumer = 1;
+
+-- 2. Create target MergeTree table
+CREATE TABLE events (
+    event_time DateTime,
+    event_type String,
+    user_id UInt64,
+    properties String
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(event_time)
+ORDER BY (event_time, user_id);
+
+-- 3. Create materialized view for ingestion
+CREATE MATERIALIZED VIEW events_consumer TO events AS
+SELECT 
+    event_time,
+    event_type,
+    user_id,
+    properties
+FROM events_kafka;
+
+-- Data flows: Kafka -> events_kafka -> events_consumer -> events
+```
+
+<Accordion title="Kafka Consumer Details">
+  From `src/Storages/Kafka/StorageKafka.h:82-96`:
+  
+  - Consumer pool management (line 82-83)
+  - Format name access (line 85)
+  - Error handling modes (line 87)
+  - Thread-safe consumer operations (line 89-96)
+  - Supports dynamic subcolumns (line 98-99)
+</Accordion>
+
+### Error Handling
+
+```sql
+CREATE TABLE kafka_table ENGINE = Kafka() 
+SETTINGS 
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list = 'events',
+    kafka_group_name = 'consumer1',
+    kafka_format = 'JSONEachRow',
+    kafka_skip_broken_messages = 1000,  -- Skip up to 1000 broken messages
+    kafka_handle_error_mode = 'stream'; -- Send errors to special stream
+```
+
+### Write Support
+
+From `src/Storages/Kafka/StorageKafka.h:73-77`:
+
+```sql
+-- Write to Kafka topic
+INSERT INTO kafka_table 
+SELECT 
+    now() AS timestamp,
+    'event' AS type,
+    number AS user_id
+FROM numbers(1000);
+
+-- Prefers small blocks (line 80)
+-- prefersLargeBlocks() = false
+```
+
+## Performance Characteristics
+
+| Engine | Read Speed | Write Speed | Latency | Use Case |
+|--------|-----------|-------------|---------|----------|
+| MySQL | Medium | Medium | Low | OLTP integration |
+| PostgreSQL | Medium | Medium | Low | OLTP integration |
+| MongoDB | Medium | N/A | Medium | Document queries |
+| Kafka | High | High | Very Low | Stream processing |
+
+## External Database Flag
+
+From source code:
+
+```sql
+-- MySQL: isExternalDatabase() = true (StorageMySQL.h:45)
+-- PostgreSQL: isExternalDatabase() = true (StoragePostgreSQL.h:41)
+-- MongoDB: isExternalDatabase() = true (StorageMongoDB.h:78)
+```
+
+## Best Practices
+
+### Connection Management
+
+```sql
+-- Use connection pooling
+-- Specify failover replicas
+-- Configure timeouts appropriately
+```
+
+### Data Type Mapping
+
+```sql
+-- MySQL/PostgreSQL: Use compatible types
+-- MongoDB: Handle ObjectId as String
+-- Kafka: Match format schema
+```
+
+### Performance
+
+<Tip>
+  - Minimize cross-database joins
+  - Use materialized views for Kafka ingestion
+  - Index external tables appropriately
+  - Monitor connection pool usage
+</Tip>
+
+### Security
+
+```sql
+-- Use SSL for MySQL/PostgreSQL
+-- Secure Kafka with SASL/SSL
+-- Limit user permissions
+-- Avoid storing passwords in queries (use config files)
+```
+
+## Source Code References
+
+- `src/Storages/StorageMySQL.h:24-80` - MySQL engine
+- `src/Storages/StoragePostgreSQL.h:25-78` - PostgreSQL engine  
+- `src/Storages/StorageMongoDB.h:57-78` - MongoDB engine
+- `src/Storages/Kafka/StorageKafka.h:33-100` - Kafka engine

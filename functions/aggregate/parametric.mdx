@@ -1,0 +1,612 @@
+---
+title: Parametric Aggregate Functions
+description: Aggregate functions that accept parameters to configure their behavior
+---
+
+Parametric aggregate functions accept parameters in addition to their arguments. Parameters are specified in parentheses before the argument list and configure the function's behavior.
+
+## Syntax
+
+Parametric functions use this syntax:
+
+```sql
+functionName(param1, param2, ...)(arg1, arg2, ...)
+```
+
+The parameters are evaluated once (at query analysis time), while arguments are evaluated for each row.
+
+## Quantile Functions
+
+Quantile functions compute approximate or exact percentiles of a distribution. They are among the most commonly used parametric functions.
+
+<Accordion title="quantile">
+
+**Signature**: `quantile(level)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionQuantile.cpp`
+
+Computes approximate quantile using reservoir sampling.
+
+**Parameters**:
+- `level` - Quantile level (0 to 1). Examples: 0.5 = median, 0.95 = 95th percentile
+
+**Arguments**:
+- `expr` - Numeric expression
+
+**Return type**: Float64
+
+**Examples**:
+
+```sql
+-- Median response time
+SELECT quantile(0.5)(response_time) FROM requests;
+
+-- 95th percentile
+SELECT quantile(0.95)(response_time) FROM requests;
+
+-- Multiple quantiles efficiently
+SELECT quantiles(0.5, 0.9, 0.95, 0.99)(response_time) FROM requests;
+┌─quantiles(0.5, 0.9, 0.95, 0.99)(response_time)─┐
+│ [0.123,0.456,0.789,1.234]                      │
+└────────────────────────────────────────────────┘
+
+-- Quantile by group
+SELECT 
+    endpoint,
+    quantile(0.99)(response_time) AS p99
+FROM requests
+GROUP BY endpoint
+ORDER BY p99 DESC;
+```
+
+**Algorithm**: Reservoir sampling (non-deterministic, memory-efficient)
+
+</Accordion>
+
+<Accordion title="quantileExact">
+
+**Signature**: `quantileExact(level)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionQuantileExact.cpp`
+
+Computes exact quantile by storing all values and sorting.
+
+**Parameters**:
+- `level` - Quantile level (0 to 1)
+
+**Arguments**:
+- `expr` - Numeric expression
+
+**Return type**: Same as input type
+
+**Examples**:
+
+```sql
+-- Exact median
+SELECT quantileExact(0.5)(salary) FROM employees;
+
+-- Exact quartiles
+SELECT quantilesExact(0.25, 0.5, 0.75)(price) FROM products;
+```
+
+**Memory**: O(n) - stores all values
+
+**Performance**: Slower than approximate methods for large datasets
+
+</Accordion>
+
+<Accordion title="quantileTDigest">
+
+**Signature**: `quantileTDigest(level)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionQuantileTDigest.cpp`
+
+Computes approximate quantile using [t-digest algorithm](https://github.com/tdunning/t-digest).
+
+**Parameters**:
+- `level` - Quantile level (0 to 1)
+
+**Arguments**:
+- `expr` - Numeric expression
+
+**Return type**: Float64
+
+**Examples**:
+
+```sql
+SELECT quantileTDigest(0.95)(response_time) FROM requests;
+
+-- More accurate at extremes than basic quantile
+SELECT 
+    quantileTDigest(0.99)(response_time) AS p99_tdigest,
+    quantileTDigest(0.999)(response_time) AS p999_tdigest
+FROM requests;
+```
+
+**Advantages**:
+- Better accuracy at extreme quantiles (p99, p999)
+- Deterministic (unlike reservoir sampling)
+- Bounded memory usage
+
+</Accordion>
+
+<Accordion title="quantileTiming">
+
+**Signature**: `quantileTiming(level)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionQuantileTiming.cpp`
+
+Optimized for computing quantiles of timing distributions (milliseconds).
+
+**Parameters**:
+- `level` - Quantile level (0 to 1)
+
+**Arguments**:
+- `expr` - Timing value in milliseconds (UInt16, typically 0-30000)
+
+**Return type**: Float32
+
+**Examples**:
+
+```sql
+SELECT quantileTiming(0.95)(toUInt16(response_time * 1000)) 
+FROM requests;
+```
+
+**Optimizations**:
+- Fixed precision: 1ms for values < 1024ms, then exponentially bucketed
+- Very fast and memory-efficient
+- Ideal for web/API response times
+
+</Accordion>
+
+<Accordion title="quantileExactWeighted">
+
+**Signature**: `quantileExactWeighted(level)(expr, weight)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionQuantileExactWeighted.cpp`
+
+Computes exact weighted quantile.
+
+**Parameters**:
+- `level` - Quantile level (0 to 1)
+
+**Arguments**:
+- `expr` - Numeric expression
+- `weight` - Weight for each value (UInt64)
+
+**Return type**: Same as expr type
+
+**Examples**:
+
+```sql
+-- Weighted median price by sales volume
+SELECT quantileExactWeighted(0.5)(price, quantity) FROM sales;
+
+-- 90th percentile of response time weighted by request count
+SELECT quantileExactWeighted(0.9)(avg_response, request_count) 
+FROM aggregated_metrics;
+```
+
+</Accordion>
+
+## Top-K Functions
+
+<Accordion title="topK">
+
+**Signature**: `topK(k)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionTopK.cpp`
+
+Returns array of approximately k most frequent values using [Filtered Space-Saving algorithm](http://www.l2f.inesc-id.pt/~fmmb/wiki/uploads/Work/misnis.ref0a.pdf).
+
+**Parameters**:
+- `k` - Number of top elements to return
+
+**Arguments**:
+- `expr` - Expression to find top values for
+
+**Return type**: `Array(T)` where T is expr type
+
+**Examples**:
+
+```sql
+-- Top 10 most visited pages
+SELECT topK(10)(page_url) FROM page_views;
+┌─topK(10)(page_url)────────────────────────────┐
+│ ['/home','/products','/about',...]            │
+└───────────────────────────────────────────────┘
+
+-- Top 5 users by activity
+SELECT topK(5)(user_id) FROM events;
+
+-- Top products by category
+SELECT 
+    category,
+    topK(3)(product_id) AS top_products
+FROM sales
+GROUP BY category;
+```
+
+**Accuracy**: Approximate - may miss some values or include extras
+
+**Memory**: O(k) - bounded by k parameter
+
+</Accordion>
+
+<Accordion title="topKWeighted">
+
+**Signature**: `topKWeighted(k)(expr, weight)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionTopK.cpp`
+
+Returns top k values by weighted frequency.
+
+**Parameters**:
+- `k` - Number of top elements
+
+**Arguments**:
+- `expr` - Expression to find top values for
+- `weight` - Weight for each occurrence
+
+**Return type**: `Array(T)`
+
+**Examples**:
+
+```sql
+-- Top 10 products by revenue (not just count)
+SELECT topKWeighted(10)(product_id, revenue) FROM sales;
+
+-- Top articles by weighted engagement
+SELECT topKWeighted(20)(article_id, views * 0.1 + shares * 2 + comments * 5)
+FROM article_metrics;
+```
+
+</Accordion>
+
+## Histogram Functions
+
+<Accordion title="histogram">
+
+**Signature**: `histogram(bins)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionHistogram.cpp`
+
+Computes adaptive histogram with specified number of bins.
+
+**Parameters**:
+- `bins` - Number of histogram bins (max 254)
+
+**Arguments**:
+- `expr` - Numeric expression
+
+**Return type**: `Array(Tuple(Float64, Float64, Float64))` - array of (lower_bound, upper_bound, height)
+
+**Examples**:
+
+```sql
+-- Create 20-bin histogram of response times
+SELECT histogram(20)(response_time) FROM requests;
+
+-- Visualize distribution
+SELECT 
+    arrayJoin(histogram(10)(age)) AS bin,
+    bin.1 AS lower,
+    bin.2 AS upper,
+    bin.3 AS count
+FROM users;
+```
+
+</Accordion>
+
+## Sequential Analysis Functions
+
+<Accordion title="sequenceMatch">
+
+**Signature**: `sequenceMatch(pattern)(timestamp, cond1, cond2, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionSequenceMatch.cpp`
+
+Checks if event sequence matches pattern.
+
+**Parameters**:
+- `pattern` - Pattern string with regex-like syntax
+
+**Arguments**:
+- `timestamp` - Event timestamp
+- `cond1, cond2, ...` - Boolean conditions for events
+
+**Return type**: UInt8 (0 or 1)
+
+**Pattern syntax**:
+- `(?1)` - event where cond1 is true
+- `(?1)(?2)` - event 1 followed by event 2
+- `(?1).*(?2)` - event 1, then eventually event 2
+- `(?1)(?t>=3600)(?2)` - event 1, then event 2 at least 1 hour later
+
+**Examples**:
+
+```sql
+-- Check if user viewed product then purchased
+SELECT 
+    user_id,
+    sequenceMatch('(?1)(?2)')(timestamp, event = 'view', event = 'purchase') AS converted
+FROM events
+GROUP BY user_id;
+
+-- Signup followed by purchase within 24 hours
+SELECT sequenceMatch('(?1)(?t<=86400)(?2)')(
+    timestamp, 
+    event = 'signup', 
+    event = 'purchase'
+) FROM user_events GROUP BY user_id;
+```
+
+</Accordion>
+
+<Accordion title="sequenceCount">
+
+**Signature**: `sequenceCount(pattern)(timestamp, cond1, cond2, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionSequenceMatch.cpp`
+
+Counts number of times event sequence matches pattern.
+
+**Parameters**:
+- `pattern` - Pattern string (same syntax as sequenceMatch)
+
+**Arguments**:
+- `timestamp` - Event timestamp
+- `cond1, cond2, ...` - Boolean conditions
+
+**Return type**: UInt64
+
+**Examples**:
+
+```sql
+-- Count how many times user added item then removed it
+SELECT 
+    user_id,
+    sequenceCount('(?1)(?2)')(timestamp, action = 'add_cart', action = 'remove_cart') AS abandons
+FROM cart_events
+GROUP BY user_id;
+```
+
+</Accordion>
+
+<Accordion title="windowFunnel">
+
+**Signature**: `windowFunnel(window)(timestamp, cond1, cond2, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionWindowFunnel.cpp`
+
+Searches for event chains in a sliding time window and returns the maximum length of the chain.
+
+**Parameters**:
+- `window` - Time window size in seconds
+
+**Arguments**:
+- `timestamp` - Event timestamp
+- `cond1, cond2, ...` - Ordered conditions representing funnel steps
+
+**Return type**: UInt8 - deepest level reached (0 to number of conditions)
+
+**Examples**:
+
+```sql
+-- Conversion funnel: view -> cart -> checkout -> purchase (within 1 hour)
+SELECT 
+    windowFunnel(3600)(
+        timestamp,
+        event = 'view',
+        event = 'add_to_cart',
+        event = 'checkout',
+        event = 'purchase'
+    ) AS funnel_level
+FROM events
+GROUP BY user_id;
+-- Returns: 0 (no events), 1 (view only), 2 (view+cart), 3 (view+cart+checkout), 4 (all steps)
+
+-- Analyze funnel dropoff
+SELECT 
+    funnel_level,
+    count() AS users
+FROM (
+    SELECT 
+        user_id,
+        windowFunnel(86400)(timestamp, step = 1, step = 2, step = 3, step = 4) AS funnel_level
+    FROM user_journey
+    GROUP BY user_id
+)
+GROUP BY funnel_level
+ORDER BY funnel_level;
+```
+
+</Accordion>
+
+## Retention Analysis
+
+<Accordion title="retention">
+
+**Signature**: `retention(cond1, cond2, ...)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionRetention.cpp`
+
+Calculates retention by checking which conditions are met.
+
+**Parameters**: None (uses variable arguments)
+
+**Arguments**:
+- `cond1, cond2, ...` - Boolean conditions (usually for different time periods)
+
+**Return type**: `Array(UInt8)` - array of 0/1 values
+
+**Examples**:
+
+```sql
+-- Day 1, Day 7, Day 30 retention
+SELECT 
+    uid,
+    retention(
+        date = '2024-01-01',
+        date = '2024-01-07',
+        date = '2024-01-30'
+    ) AS r
+FROM user_activity
+GROUP BY uid;
+-- Returns: [1,1,1] if user active all days, [1,1,0] if dropped after day 7, etc.
+
+-- Aggregate retention rates
+SELECT 
+    sum(r[1]) AS day1_users,
+    sum(r[2]) AS day7_users,
+    sum(r[3]) AS day30_users,
+    sum(r[2]) / sum(r[1]) AS day7_retention_rate
+FROM (
+    SELECT retention(
+        date = today(),
+        date = today() - 7,
+        date = today() - 30
+    ) AS r
+    FROM events
+    GROUP BY user_id
+);
+```
+
+</Accordion>
+
+## Statistical Test Functions
+
+<Accordion title="mannWhitneyUTest">
+
+**Signature**: `mannWhitneyUTest(alternative, continuity_correction)(sample, group)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionMannWhitneyUTest.cpp`
+
+Applies Mann-Whitney rank test to compare two samples.
+
+**Parameters**:
+- `alternative` - Alternative hypothesis: 'two-sided', 'less', 'greater'
+- `continuity_correction` - Continuity correction: 0 or 1
+
+**Arguments**:
+- `sample` - Sample values
+- `group` - Group identifier (0 or 1)
+
+**Return type**: `Tuple(Float64, Float64)` - (U statistic, p-value)
+
+**Examples**:
+
+```sql
+-- Test if treatment group differs from control
+SELECT mannWhitneyUTest('two-sided', 1)(conversion_rate, is_treatment)
+FROM ab_test_results;
+```
+
+</Accordion>
+
+<Accordion title="studentTTest">
+
+**Signature**: `studentTTest(alternative)(sample, group)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionStudentTTest.cpp`
+
+Applies Welch's t-test to compare two samples.
+
+**Parameters**:
+- `alternative` - Alternative hypothesis: 'two-sided', 'less', 'greater'
+
+**Arguments**:
+- `sample` - Sample values
+- `group` - Group identifier (0 or 1)
+
+**Return type**: `Tuple(Float64, Float64)` - (t statistic, p-value)
+
+**Examples**:
+
+```sql
+-- Compare mean response times between two servers
+SELECT studentTTest('two-sided')(response_time, server_id)
+FROM metrics
+WHERE server_id IN (1, 2);
+```
+
+</Accordion>
+
+## Sampling Functions
+
+<Accordion title="groupArraySample">
+
+**Signature**: `groupArraySample(max_size)(expr)`
+
+**Source**: `src/AggregateFunctions/AggregateFunctionGroupArray.cpp`
+
+Returns random sample of values using reservoir sampling.
+
+**Parameters**:
+- `max_size` - Maximum sample size
+
+**Arguments**:
+- `expr` - Expression to sample
+
+**Return type**: `Array(T)`
+
+**Examples**:
+
+```sql
+-- Random sample of 100 user IDs
+SELECT groupArraySample(100)(user_id) FROM large_table;
+
+-- Sample products from each category
+SELECT 
+    category,
+    groupArraySample(10)(product_name) AS sample_products
+FROM products
+GROUP BY category;
+```
+
+</Accordion>
+
+## Using Parameters Effectively
+
+<Accordion title="Parameter Best Practices">
+
+1. **Parameters are evaluated once**:
+   ```sql
+   -- Parameters must be constants or expressions without table columns
+   SELECT quantile(0.95)(response_time) FROM requests;  -- OK
+   SELECT quantile(percentile_col)(response_time) FROM requests;  -- ERROR
+   ```
+
+2. **Combine parametric functions efficiently**:
+   ```sql
+   -- Efficient: compute multiple quantiles in one pass
+   SELECT quantiles(0.5, 0.9, 0.95, 0.99)(response_time) FROM requests;
+   
+   -- Inefficient: separate passes
+   SELECT 
+       quantile(0.5)(response_time),
+       quantile(0.9)(response_time),
+       quantile(0.95)(response_time)
+   FROM requests;
+   ```
+
+3. **Choose right algorithm for your use case**:
+   ```sql
+   -- Exact: small datasets, need precision
+   SELECT quantileExact(0.95)(value) FROM small_table;
+   
+   -- TDigest: large datasets, extreme quantiles important
+   SELECT quantileTDigest(0.99)(value) FROM large_table;
+   
+   -- Timing: response time distributions
+   SELECT quantileTiming(0.95)(ms) FROM web_requests;
+   ```
+
+</Accordion>
+
+## See Also
+
+- [Aggregate Functions Overview](./overview) - Introduction to aggregate functions
+- [Standard Aggregate Functions](./standard) - Non-parametric aggregate functions  
+- [Function Combinators](./combinators) - Modify function behavior with suffixes

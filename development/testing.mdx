@@ -1,0 +1,627 @@
+---
+title: Testing Framework and Practices
+description: Complete guide to testing ClickHouse - unit tests, functional tests, integration tests, and best practices
+---
+
+ClickHouse has a comprehensive testing infrastructure covering unit tests, functional tests, integration tests, and performance tests. This guide helps you understand and contribute to the test suite.
+
+## Test Types Overview
+
+ClickHouse uses multiple test types, each serving different purposes:
+
+| Test Type | Location | Purpose | Run Time |
+|-----------|----------|---------|----------|
+| Unit Tests | `src/*/tests/gtest_*.cpp` | C++ component testing | Fast |
+| Functional Tests | `tests/queries/0_stateless/` | SQL functionality | Medium |
+| Integration Tests | `tests/integration/` | Multi-instance, external systems | Slow |
+| Performance Tests | `tests/performance/` | Performance regression detection | Slow |
+| Fuzzing Tests | `tests/fuzz/` | Security and robustness | Variable |
+
+## Unit Tests
+
+Unit tests are written in C++ using Google Test framework and located alongside source code.
+
+### Structure
+
+Unit tests are in `gtest_*.cpp` files within source directories:
+
+```
+src/
+├── Interpreters/
+│   ├── tests/
+│   │   ├── gtest_filecache.cpp
+│   │   ├── gtest_context_race.cpp
+│   │   └── ...
+├── Storages/
+│   ├── MergeTree/
+│   │   ├── tests/
+│   │   │   ├── gtest_async_inserts.cpp
+│   │   │   └── ...
+```
+
+### Building Unit Tests
+
+<Steps>
+
+<Step title="Enable tests in CMake">
+
+```bash
+mkdir build && cd build
+cmake -DENABLE_TESTS=ON ..
+```
+
+<Note>
+Unit tests are enabled by default (`ENABLE_TESTS=ON`).
+</Note>
+
+</Step>
+
+<Step title="Build the tests">
+
+```bash
+# Build all tests
+ninja
+
+# Or build only the test target
+ninja unit_tests_dbms
+```
+
+</Step>
+
+<Step title="Run the tests">
+
+```bash
+# Run all unit tests
+ctest
+
+# Run specific test binary
+./src/Interpreters/tests/gtest_filecache
+
+# Run with verbose output
+ctest --verbose
+
+# Run specific test by name
+ctest -R gtest_filecache
+```
+
+</Step>
+
+</Steps>
+
+### Writing Unit Tests
+
+Example unit test structure:
+
+```cpp
+#include <gtest/gtest.h>
+#include <Interpreters/Context.h>
+
+using namespace DB;
+
+TEST(ContextTest, BasicCreation)
+{
+    auto context = Context::createGlobal();
+    ASSERT_NE(context, nullptr);
+}
+
+TEST(ContextTest, SettingsManagement)
+{
+    auto context = Context::createGlobal();
+    context->setSetting("max_threads", 4);
+    ASSERT_EQ(context->getSettingsRef().max_threads, 4);
+}
+```
+
+## Functional Tests
+
+Functional tests verify SQL functionality using `.sql` and `.sh` test files.
+
+### Test Structure
+
+Functional tests are located in `tests/queries/0_stateless/`:
+
+```
+tests/queries/0_stateless/
+├── 00001_select_1.sql
+├── 00001_select_1.reference
+├── 02833_concurrency_check.sh
+├── 02833_concurrency_check.reference
+└── ... (thousands of tests)
+```
+
+### Test File Format
+
+**SQL Test** (`.sql` file):
+```sql
+-- Test basic SELECT functionality
+SELECT 1;
+SELECT 'Hello, World!';
+SELECT number FROM system.numbers LIMIT 5;
+```
+
+**Reference Output** (`.reference` file):
+```
+1
+Hello, World!
+0
+1
+2
+3
+4
+```
+
+**Shell Test** (`.sh` file):
+```bash
+#!/usr/bin/env bash
+CURDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$CURDIR"/../shell_config.sh
+
+$CLICKHOUSE_CLIENT --query="SELECT 1"
+```
+
+### Running Functional Tests
+
+<Steps>
+
+<Step title="Build ClickHouse">
+
+```bash
+mkdir build && cd build
+cmake ..
+ninja
+```
+
+</Step>
+
+<Step title="Run tests with clickhouse-test">
+
+```bash
+# Run all tests
+./tests/clickhouse-test
+
+# Run specific test
+./tests/clickhouse-test 00001
+
+# Run tests matching pattern
+./tests/clickhouse-test -t aggregate
+
+# Run with specific options
+./tests/clickhouse-test --no-long --no-shard
+```
+
+</Step>
+
+<Step title="Run in parallel">
+
+```bash
+# Use multiple processes for faster execution
+./tests/clickhouse-test --parallel 4
+```
+
+</Step>
+
+</Steps>
+
+### Writing Functional Tests
+
+<Note>
+When writing tests in `tests/queries`, prefer adding a **new test** instead of extending existing ones.
+</Note>
+
+Best practices:
+
+1. **Use descriptive names**: `02999_feature_description.sql`
+2. **Keep tests focused**: Test one feature per file
+3. **Avoid no-* tags**: Don't add "no-parallel" unless strictly necessary
+4. **Clean up**: Drop tables/databases created during tests
+5. **Make tests deterministic**: Avoid random values or timing dependencies
+
+**Example test**:
+
+```sql
+-- tests/queries/0_stateless/02999_array_functions.sql
+DROP TABLE IF EXISTS test_array;
+
+CREATE TABLE test_array (arr Array(Int32)) ENGINE = Memory;
+
+INSERT INTO test_array VALUES ([1, 2, 3]), ([4, 5, 6]);
+
+SELECT arrayMap(x -> x * 2, arr) FROM test_array ORDER BY arr;
+
+DROP TABLE test_array;
+```
+
+**Reference**:
+```
+-- tests/queries/0_stateless/02999_array_functions.reference
+[2,4,6]
+[8,10,12]
+```
+
+## Integration Tests
+
+Integration tests verify ClickHouse behavior with multiple instances, external systems, and complex configurations.
+
+### Structure
+
+Integration tests are Python-based and use Docker:
+
+```
+tests/integration/
+├── conftest.py           # Pytest configuration
+├── pytest.ini            # Pytest settings
+├── helpers/              # Test utilities
+├── test_access_control/  # Test module
+│   ├── __init__.py
+│   └── test.py
+└── ... (700+ test directories)
+```
+
+### Running Integration Tests
+
+#### Method 1: Using CI Praktika (Recommended)
+
+<Steps>
+
+<Step title="Ensure prerequisites">
+
+- Python 3
+- Docker
+- ClickHouse binary in `./build/programs/clickhouse` or `./ci/tmp/clickhouse`
+
+</Step>
+
+<Step title="Run tests via Praktika">
+
+```bash
+# Run all integration tests
+python -m ci.praktika run "integration"
+
+# Run specific test
+python -m ci.praktika run "integration" --test "test_named_collections"
+
+# Run multiple tests
+python -m ci.praktika run "integration" \
+  --test "test_named_collections" "test_multiple_disks"
+```
+
+</Step>
+
+<Step title="Advanced options">
+
+```bash
+# Repeat test N times
+python -m ci.praktika run "integration" \
+  --test "test_flaky" --count 10
+
+# Debug mode with pdb
+python -m ci.praktika run "integration" \
+  --test "test_bug" --debug
+
+# Custom worker count
+python -m ci.praktika run "integration" \
+  --test "test_parallel" --workers 8
+
+# Custom binary path
+python -m ci.praktika run "integration" \
+  --path ./my_build/programs/clickhouse
+```
+
+</Step>
+
+</Steps>
+
+#### Method 2: Native pytest
+
+<Steps>
+
+<Step title="Install dependencies">
+
+```bash
+sudo apt-get install python3-pip libpq-dev zlib1g-dev \
+  libcrypto++-dev libssl-dev libkrb5-dev python3-dev openjdk-17-jdk
+
+sudo -H pip install pytest pytest-timeout pytest-xdist docker \
+  PyMySQL psycopg2-binary kafka-python kazoo minio redis \
+  grpcio protobuf azure-storage-blob pyarrow boto3
+```
+
+See `tests/integration/README.md` for the complete list.
+
+</Step>
+
+<Step title="Run with pytest">
+
+```bash
+cd tests/integration
+
+# Run specific test
+pytest test_named_collections/test.py
+
+# Run with parallelism
+pytest test_named_collections/ -n 4 --dist=loadfile
+
+# Repeat test multiple times
+pytest test_flaky/ --count 10 --repeat-scope=function
+
+# Debug with pdb
+pytest test_bug/ --pdb
+```
+
+</Step>
+
+</Steps>
+
+### Writing Integration Tests
+
+<Steps>
+
+<Step title="Create test directory">
+
+```bash
+cd tests/integration
+mkdir test_my_feature
+cd test_my_feature
+touch __init__.py test.py
+```
+
+</Step>
+
+<Step title="Write the test">
+
+```python
+# test.py
+import pytest
+from helpers.cluster import ClickHouseCluster
+
+cluster = ClickHouseCluster(__file__)
+node = cluster.add_instance('node', with_zookeeper=True)
+
+@pytest.fixture(scope="module")
+def started_cluster():
+    try:
+        cluster.start()
+        yield cluster
+    finally:
+        cluster.shutdown()
+
+def test_basic_functionality(started_cluster):
+    result = node.query("SELECT 1")
+    assert result.strip() == "1"
+
+def test_distributed_query(started_cluster):
+    node.query("CREATE TABLE test (x Int32) ENGINE = Memory")
+    node.query("INSERT INTO test VALUES (1), (2), (3)")
+    result = node.query("SELECT sum(x) FROM test")
+    assert result.strip() == "6"
+```
+
+</Step>
+
+</Steps>
+
+### Integration Test Utilities
+
+The `helpers/` directory provides:
+
+- `ClickHouseCluster` - Launch ClickHouse clusters
+- `ClickHouseInstance` - Control individual nodes
+- Network simulation - Test network failures
+- External systems - ZooKeeper, Kafka, MySQL, etc.
+
+## Performance Tests
+
+Performance tests detect performance regressions:
+
+```
+tests/performance/
+├── array_join.xml
+├── group_by_pk.xml
+└── ... (hundreds of tests)
+```
+
+### Performance Test Format
+
+```xml
+<test>
+    <substitutions>
+        <substitution>
+            <name>table_size</name>
+            <values>
+                <value>1000000</value>
+            </values>
+        </substitution>
+    </substitutions>
+
+    <create_query>
+        CREATE TABLE test_table (x UInt64) ENGINE = Memory
+    </create_query>
+
+    <fill_query>
+        INSERT INTO test_table SELECT number FROM numbers({table_size})
+    </fill_query>
+
+    <query>
+        SELECT sum(x) FROM test_table
+    </query>
+
+    <drop_query>
+        DROP TABLE test_table
+    </drop_query>
+</test>
+```
+
+## Fuzzing Tests
+
+Fuzzing tests use libfuzzer to find crashes and undefined behavior:
+
+```bash
+# Build with fuzzing enabled
+cmake -DENABLE_FUZZING=ON ..
+ninja
+
+# Run a fuzzer
+./programs/codegen_select_fuzzer corpus/ -max_len=1000
+```
+
+Fuzzers are in `src/*/fuzzers/` and `tests/fuzz/`.
+
+## Test Best Practices
+
+### General Guidelines
+
+<Warning>
+- **Never use `sleep`** to fix timing issues - use proper synchronization
+- **Make tests deterministic** - avoid random values or timestamps
+- **Clean up resources** - drop tables, close connections
+- **Test one thing** - focused tests are easier to debug
+</Warning>
+
+### Writing Good Tests
+
+✅ **DO**:
+- Write descriptive test names
+- Add comments explaining complex test logic
+- Use meaningful variable names
+- Test edge cases and error conditions
+- Make tests independent
+
+❌ **DON'T**:
+- Add "no-parallel" tags without reason
+- Create flaky tests that sometimes fail
+- Leave temporary tables or data
+- Test multiple unrelated features in one test
+- Use hardcoded paths or ports that may conflict
+
+### Test Naming Conventions
+
+Functional test naming:
+```
+[number]_[feature_description].[sql|sh]
+
+Examples:
+- 00001_select_1.sql
+- 02833_merge_tree_sync.sql
+- 03001_array_processing.sh
+```
+
+Unit test naming:
+```cpp
+TEST(ComponentName, TestDescription)
+{
+    // Test implementation
+}
+```
+
+## Debugging Tests
+
+### Debugging Unit Tests
+
+```bash
+# Run with gdb
+gdb ./src/Interpreters/tests/gtest_filecache
+(gdb) run
+
+# Run with verbose output
+./src/Interpreters/tests/gtest_filecache --gtest_filter="*TestName*" -v
+```
+
+### Debugging Functional Tests
+
+```bash
+# Run with verbose output
+./tests/clickhouse-test 00001 --verbose
+
+# Keep test database after failure
+./tests/clickhouse-test 00001 --no-drop-if-fail
+
+# Print queries being executed
+./tests/clickhouse-test 00001 --print-time
+```
+
+### Debugging Integration Tests
+
+Using the praktika wrapper with `breakpoint()`:
+
+```python
+def test_my_feature(started_cluster):
+    breakpoint()  # Python pdb prompt
+    result = node.query("SELECT 1")
+```
+
+In another terminal:
+```bash
+source tests/integration/runner-env.sh
+
+# Connect to container
+runner-client
+
+# Open shell
+runner-bash
+
+# Attach debugger (requires nnd binary)
+runner-nnd
+```
+
+## Continuous Integration
+
+### CI Test Jobs
+
+ClickHouse CI runs multiple test configurations:
+
+- **Functional tests**: Standard, with analyzers, distributed
+- **Integration tests**: Split into batches, various sanitizers
+- **Unit tests**: All sanitizer configurations
+- **Performance tests**: Comparison with previous versions
+- **Style checks**: Code formatting, includes, etc.
+
+### Checking CI Status
+
+<Note>
+Look at **Praktika reports** first when checking CI. GitHub Actions logs usually contain less information.
+</Note>
+
+CI reports show:
+- Test results by category
+- Failed test details
+- Links to logs and artifacts
+- Performance comparison data
+
+## Test Coverage
+
+To check test coverage:
+
+```bash
+# Build with coverage
+cmake -DWITH_COVERAGE=ON ..
+ninja
+
+# Run tests
+ctest
+
+# Generate coverage report
+lcov --capture --directory . --output-file coverage.info
+genhtml coverage.info --output-directory coverage_html
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Building ClickHouse" icon="hammer" href="/development/building">
+  Build from source before testing
+</Card>
+
+<Card title="Contributing Guide" icon="code-pull-request" href="/development/contributing">
+  Learn how to contribute tests
+</Card>
+
+<Card title="Architecture" icon="sitemap" href="/development/architecture">
+  Understand the codebase structure
+</Card>
+
+<Card title="Integration Tests README" icon="book" href="https://github.com/ClickHouse/ClickHouse/blob/master/tests/integration/README.md">
+  Detailed integration test docs
+</Card>
+
+</CardGroup>

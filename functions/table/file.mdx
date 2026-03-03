@@ -1,0 +1,342 @@
+---
+title: file
+description: Read and write files from the local filesystem
+---
+
+# file
+
+The `file` table function creates a table from a file in the local filesystem. It supports reading from and writing to files in various formats.
+
+## Syntax
+
+```sql
+file(path [, format [, structure [, compression]]])
+```
+
+<ParamField path="path" type="String" required>
+  File path. Can be:
+  - Relative path (from user_files directory)
+  - Absolute path
+  - Glob pattern for multiple files (`*.csv`, `data_*.json`)
+  - Archive path with syntax `path/to/archive.zip :: path/in/archive`
+  - Special values: `stdin`, `-`, `stdout`, `stderr`
+  - File descriptor (integer value)
+</ParamField>
+
+<ParamField path="format" type="String" default="auto">
+  Data format. When set to `auto`, ClickHouse attempts to detect the format from the file extension. Supported formats include: CSV, TSV, JSONEachRow, Parquet, Native, and many others.
+</ParamField>
+
+<ParamField path="structure" type="String" default="auto">
+  Table structure as `column1_name column1_type, column2_name column2_type, ...`. When set to `auto`, the structure is automatically inferred from the file data.
+</ParamField>
+
+<ParamField path="compression" type="String" default="auto">
+  Compression method. Supported values: `none`, `auto`, `gzip`, `gz`, `brotli`, `lz4`, `zstd`, `xz`, `lzma`, `bz2`, `snappy`, `deflate`. When set to `auto`, compression is detected from the file extension.
+</ParamField>
+
+## Description
+
+The `file` function provides access to files in the ClickHouse server's filesystem. Files must be located in the `user_files` directory (configured via `user_files_path` setting) unless an absolute path is used.
+
+### File Source Location
+
+- **Relative paths**: Resolved relative to the `user_files_path` directory
+- **Absolute paths**: Used as-is (requires appropriate permissions)
+- **Glob patterns**: Support `*`, `?`, `{a,b}`, `{1..10}` patterns for matching multiple files
+
+### Schema Inference
+
+When `structure` is set to `auto`, ClickHouse automatically infers the table schema by reading a sample of the file data. This works for most formats:
+
+```sql
+-- Automatically detect both format and structure
+SELECT * FROM file('data.parquet')
+
+-- Explicitly specify format, auto-detect structure
+SELECT * FROM file('data.csv', 'CSV', 'auto')
+```
+
+## Examples
+
+### Basic Reading
+
+```sql
+-- Read a CSV file with explicit structure
+SELECT * FROM file('data.csv', 'CSV', 'id UInt32, name String, value Float64')
+
+-- Read with automatic schema detection
+SELECT * FROM file('data.parquet')
+
+-- Read a JSON file
+SELECT * FROM file('users.json', 'JSONEachRow', 'id UInt32, name String, email String')
+```
+
+### Reading Multiple Files
+
+```sql
+-- Read all CSV files in a directory
+SELECT * FROM file('logs/*.csv', 'CSV')
+
+-- Read files matching a pattern
+SELECT * FROM file('events_202{1,2,3}_*.parquet')
+
+-- Read numbered files
+SELECT * FROM file('data_{1..100}.csv', 'CSV', 'id UInt32, value String')
+```
+
+### Working with Compression
+
+```sql
+-- Read a gzip-compressed file (auto-detected)
+SELECT * FROM file('data.csv.gz', 'CSV')
+
+-- Explicitly specify compression
+SELECT * FROM file('data.csv', 'CSV', 'id UInt32, value String', 'gzip')
+
+-- Read zstd-compressed Parquet
+SELECT * FROM file('data.parquet.zst')
+```
+
+### Reading from Archives
+
+```sql
+-- Read a file from a ZIP archive
+SELECT * FROM file('backup.zip :: data/file.csv', 'CSV')
+
+-- Read from TAR archive
+SELECT * FROM file('archive.tar.gz :: logs/access.log', 'TabSeparated')
+```
+
+### Writing Data
+
+```sql
+-- Write query results to a CSV file
+INSERT INTO FUNCTION file('output.csv', 'CSV', 'id UInt32, name String')
+SELECT id, name FROM users
+
+-- Write to a Parquet file
+INSERT INTO FUNCTION file('output.parquet', 'Parquet')
+SELECT * FROM large_table
+
+-- Write compressed data
+INSERT INTO FUNCTION file('output.csv.gz', 'CSV')
+SELECT * FROM events WHERE date = today()
+```
+
+### Partitioned Writes
+
+```sql
+-- Write data partitioned by a column
+INSERT INTO FUNCTION 
+    file('partitioned/{_partition_id}/data.csv', 'CSV', 'date Date, value UInt32')
+PARTITION BY toYYYYMM(date)
+SELECT * FROM source_table
+
+-- Results in files like:
+-- partitioned/202301/data.csv
+-- partitioned/202302/data.csv
+-- partitioned/202303/data.csv
+```
+
+### Using Standard Streams
+
+```sql
+-- Read from stdin (clickhouse-local)
+SELECT * FROM file('stdin', 'CSV', 'id UInt32, value String')
+
+-- Alternative stdin syntax
+SELECT * FROM file('-', 'JSONEachRow')
+
+-- Write to stdout
+INSERT INTO FUNCTION file('stdout', 'TSV')
+SELECT * FROM my_table
+```
+
+### Using File Descriptors
+
+```sql
+-- Read from file descriptor 3
+SELECT * FROM file(3, 'CSV', 'id UInt32, name String')
+
+-- Common file descriptors:
+-- 0 = stdin
+-- 1 = stdout  
+-- 2 = stderr
+```
+
+### Virtual Columns
+
+```sql
+-- Access file metadata
+SELECT 
+    _path,          -- Full file path
+    _file,          -- File name only
+    _size,          -- File size in bytes
+    count() AS rows
+FROM file('logs/*.csv', 'CSV')
+GROUP BY _path, _file, _size
+
+-- Filter by file metadata
+SELECT * FROM file('data/*.parquet')
+WHERE _file LIKE '%2024%' AND _size > 1000000
+```
+
+## Creating Tables with file
+
+### Temporary Table from File
+
+```sql
+-- Use in subquery
+WITH data AS (
+    SELECT * FROM file('input.csv', 'CSV', 'id UInt32, value String')
+)
+SELECT * FROM data WHERE value != ''
+```
+
+### Persistent Table
+
+```sql
+-- Create a table using File engine
+CREATE TABLE my_table
+ENGINE = File(CSV)
+AS SELECT * FROM file('source.csv')
+
+-- Create table with explicit schema
+CREATE TABLE logs (
+    timestamp DateTime,
+    level String,
+    message String
+)
+ENGINE = File(JSONEachRow)
+```
+
+## Data Formats
+
+The `file` function supports all ClickHouse input/output formats:
+
+### Text Formats
+- `CSV`, `CSVWithNames`, `CSVWithNamesAndTypes`
+- `TSV`, `TabSeparated`, `TabSeparatedWithNames`
+- `JSONEachRow`, `JSONCompactEachRow`, `JSONStringsEachRow`
+- `Values`, `LineAsString`, `RawBLOB`
+
+### Binary Formats
+- `Native` - ClickHouse native binary format
+- `Parquet` - Apache Parquet columnar format
+- `ORC` - Apache ORC columnar format
+- `Arrow`, `ArrowStream` - Apache Arrow format
+
+### Structured Formats
+- `Avro`, `AvroConfluent`
+- `Protobuf`, `ProtobufSingle`
+- `CapnProto`
+- `MsgPack`
+
+See [Formats documentation](/integration/data-formats) for the complete list.
+
+## Settings
+
+### File-Specific Settings
+
+```sql
+-- Allow creating multiple output files
+SET engine_file_allow_create_multiple_files = 1
+
+-- Truncate file on insert instead of appending
+SET engine_file_truncate_on_insert = 1
+
+-- Skip empty files during read
+SET engine_file_skip_empty_files = 1
+
+-- Rename files after processing
+SET rename_files_after_processing = 'processed'
+```
+
+### Format Settings
+
+```sql
+-- CSV-specific settings
+SELECT * FROM file('data.csv', 'CSV', 'auto')
+SETTINGS 
+    format_csv_delimiter = ';',
+    input_format_csv_skip_first_lines = 1
+
+-- JSON settings
+SELECT * FROM file('data.json', 'JSONEachRow')
+SETTINGS 
+    input_format_json_read_numbers_as_strings = 1
+```
+
+## Security and Permissions
+
+### Access Control
+
+```sql
+-- Grant FILE privilege to a user
+GRANT FILE ON *.* TO username
+
+-- Revoke FILE privilege
+REVOKE FILE ON *.* FROM username
+```
+
+### Path Restrictions
+
+- By default, only files in `user_files_path` are accessible
+- Absolute paths may be restricted by server configuration
+- Symlinks may be restricted for security
+- Archive path syntax can be enabled/disabled via `allow_archive_path_syntax`
+
+## Performance Tips
+
+### Parallel Reading
+
+```sql
+-- Use glob patterns to read files in parallel
+SELECT * FROM file('data/shard_*.parquet')
+
+-- ClickHouse automatically parallelizes across files
+```
+
+### Filtering
+
+```sql
+-- Filter early to reduce I/O
+SELECT * FROM file('huge_file.parquet')
+WHERE date >= today() - 7  -- Predicate pushdown for Parquet
+```
+
+### Compression Selection
+
+- Use `lz4` for fast compression/decompression
+- Use `zstd` for better compression ratio
+- Use `none` for already compressed data
+
+## Limitations
+
+- Schema inference is not supported with file descriptors
+- Some formats don't support appending (Parquet, ORC)
+- Archive path syntax requires `allow_archive_path_syntax = 1`
+- ZIP compression (as opposed to reading from ZIP archives) is not supported
+
+## Error Handling
+
+```sql
+-- File not found
+SELECT * FROM file('nonexistent.csv')  
+-- Error: File not found
+
+-- Invalid format
+SELECT * FROM file('data.csv', 'InvalidFormat')
+-- Error: Unknown format
+
+-- Permission denied
+SELECT * FROM file('/etc/passwd')
+-- Error: Access denied
+```
+
+## See Also
+
+- [url](/functions/table/url) - Read from HTTP/HTTPS endpoints
+- [File Storage Engine](/engines/special)
+- [Input/Output Formats](/integration/data-formats)

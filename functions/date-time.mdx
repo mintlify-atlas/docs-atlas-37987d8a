@@ -1,0 +1,633 @@
+---
+title: Date and Time Functions
+description: Functions for working with dates, times, and timestamps in ClickHouse
+---
+
+ClickHouse provides a comprehensive set of functions for working with dates and times, including current time retrieval, date arithmetic, formatting, and timezone conversion.
+
+## Current Time Functions
+
+### now
+
+Returns the current date and time.
+
+```sql
+SELECT now();
+-- Result: 2026-03-03 14:30:45
+
+SELECT toTypeName(now());
+-- Result: 'DateTime'
+```
+
+### now64
+
+Returns current time with subsecond precision.
+
+```sql
+SELECT now64();
+-- Result: 2026-03-03 14:30:45.123456
+
+SELECT now64(3);
+-- Result with millisecond precision
+```
+
+### today
+
+Returns the current date.
+
+```sql
+-- From test: 00069_date_arithmetic.sql
+SELECT today();
+-- Result: 2026-03-03
+
+SELECT toTypeName(today());
+-- Result: 'Date'
+
+SELECT today() = toDate(now());
+-- Result: 1
+```
+
+### yesterday
+
+Returns yesterday's date.
+
+```sql
+SELECT yesterday();
+-- Result: 2026-03-02
+
+SELECT yesterday() + 1 = today();
+-- Result: 1
+```
+
+## Date/Time Construction
+
+### toDate
+
+Constructs a Date from various inputs.
+
+```sql
+SELECT toDate('2023-12-25');
+-- Result: 2023-12-25
+
+SELECT toDate('2023-12-25 10:30:45');
+-- Result: 2023-12-25 (time part ignored)
+
+SELECT toDate(19723);
+-- Result: 2024-01-01 (days since 1970-01-01)
+```
+
+### toDateTime
+
+Constructs a DateTime from various inputs.
+
+```sql
+SELECT toDateTime('2023-12-25 10:30:00');
+-- Result: 2023-12-25 10:30:00
+
+SELECT toDateTime(1703502600);
+-- Result: 2023-12-25 10:30:00 (from Unix timestamp)
+
+-- With timezone
+SELECT toDateTime('2023-12-25 10:30:00', 'Europe/Amsterdam');
+```
+
+### toDateTime64
+
+Constructs DateTime64 with subsecond precision.
+
+```sql
+SELECT toDateTime64('2023-12-25 10:30:00.123', 3);
+-- Result: 2023-12-25 10:30:00.123 (milliseconds)
+
+SELECT toDateTime64('2023-12-25 10:30:00.123456', 6);
+-- Result: 2023-12-25 10:30:00.123456 (microseconds)
+```
+
+### makeDate
+
+Constructs a Date from year, month, and day.
+
+```sql
+SELECT makeDate(2023, 12, 25);
+-- Result: 2023-12-25
+```
+
+### makeDateTime
+
+Constructs a DateTime from components.
+
+```sql
+SELECT makeDateTime(2023, 12, 25, 10, 30, 45);
+-- Result: 2023-12-25 10:30:45
+
+SELECT makeDateTime(2023, 12, 25, 10, 30, 45, 'Europe/Amsterdam');
+```
+
+## Date/Time Components
+
+### toYear
+
+Extracts the year.
+
+```sql
+SELECT toYear(today());
+-- Result: 2026
+
+SELECT toYear('2023-12-25');
+-- Result: 2023
+```
+
+### toMonth
+
+Extracts the month (1-12).
+
+```sql
+SELECT toMonth(today());
+-- Result: 3
+
+SELECT toMonth('2023-12-25');
+-- Result: 12
+```
+
+### toDayOfMonth
+
+Extracts the day of the month (1-31).
+
+```sql
+SELECT toDayOfMonth(today());
+-- Result: 3
+
+SELECT toDayOfMonth('2023-12-25');
+-- Result: 25
+```
+
+### toDayOfWeek
+
+Extracts the day of the week (1 = Monday, 7 = Sunday).
+
+```sql
+SELECT toDayOfWeek(today());
+-- Result: 2 (Tuesday)
+
+SELECT toDayOfWeek('2023-12-25');
+-- Result: 1 (Monday)
+```
+
+### toDayOfYear
+
+Extracts the day of the year (1-366).
+
+```sql
+SELECT toDayOfYear(today());
+-- Result: 62
+
+SELECT toDayOfYear('2023-12-31');
+-- Result: 365
+```
+
+### toHour
+
+Extracts the hour (0-23).
+
+```sql
+SELECT toHour(now());
+-- Result: 14
+
+SELECT toHour('2023-12-25 15:30:00');
+-- Result: 15
+```
+
+### toMinute
+
+Extracts the minute (0-59).
+
+```sql
+SELECT toMinute(now());
+-- Result: 30
+```
+
+### toSecond
+
+Extracts the second (0-59).
+
+```sql
+SELECT toSecond(now());
+-- Result: 45
+```
+
+### toMillisecond
+
+Extracts milliseconds from DateTime64.
+
+```sql
+SELECT toMillisecond(now64(3));
+-- Result: 123
+```
+
+## Date Arithmetic
+
+### Date/Time Addition and Subtraction
+
+```sql
+-- From test: 00069_date_arithmetic.sql
+-- Add/subtract days
+SELECT today() + 1;
+-- Result: 2026-03-04
+
+SELECT today() - 1;
+-- Result: 2026-03-02
+
+-- Subtract dates (returns Int32)
+SELECT today() - yesterday();
+-- Result: 1
+
+SELECT toTypeName(today() - today());
+-- Result: 'Int32'
+
+-- DateTime arithmetic
+SELECT toDateTime(1) + 1 = toDateTime(2);
+-- Result: 1
+
+SELECT now() + 3600;
+-- Adds 3600 seconds (1 hour)
+
+SELECT now() - 86400;
+-- Subtracts 86400 seconds (1 day)
+```
+
+### addYears / subtractYears
+
+Adds or subtracts years.
+
+```sql
+SELECT addYears(today(), 1);
+-- Result: 2027-03-03
+
+SELECT subtractYears(today(), 5);
+-- Result: 2021-03-03
+```
+
+### addMonths / subtractMonths
+
+Adds or subtracts months.
+
+```sql
+SELECT addMonths(today(), 3);
+-- Result: 2026-06-03
+
+SELECT subtractMonths(today(), 1);
+-- Result: 2026-02-03
+```
+
+### addWeeks / subtractWeeks
+
+Adds or subtracts weeks.
+
+```sql
+SELECT addWeeks(today(), 2);
+-- Result: 2026-03-17
+```
+
+### addDays / subtractDays
+
+Adds or subtracts days.
+
+```sql
+SELECT addDays(today(), 7);
+-- Result: 2026-03-10
+
+SELECT subtractDays(today(), 3);
+-- Result: 2026-02-28
+```
+
+### addHours / subtractHours
+
+Adds or subtracts hours.
+
+```sql
+SELECT addHours(now(), 5);
+-- Result: 2026-03-03 19:30:45
+```
+
+### addMinutes / subtractMinutes
+
+Adds or subtracts minutes.
+
+```sql
+SELECT addMinutes(now(), 30);
+-- Result: 2026-03-03 15:00:45
+```
+
+### addSeconds / subtractSeconds
+
+Adds or subtracts seconds.
+
+```sql
+SELECT addSeconds(now(), 120);
+-- Result: 2026-03-03 14:32:45
+```
+
+## Date Rounding and Truncation
+
+### toStartOfYear
+
+Rounds down to the start of the year.
+
+```sql
+SELECT toStartOfYear(today());
+-- Result: 2026-01-01
+```
+
+### toStartOfMonth
+
+Rounds down to the start of the month.
+
+```sql
+SELECT toStartOfMonth(today());
+-- Result: 2026-03-01
+```
+
+### toStartOfWeek
+
+Rounds down to Monday.
+
+```sql
+SELECT toStartOfWeek(today());
+-- Result: 2026-03-02 (Monday)
+```
+
+### toStartOfDay
+
+Rounds down to midnight.
+
+```sql
+SELECT toStartOfDay(now());
+-- Result: 2026-03-03 00:00:00
+```
+
+### toStartOfHour
+
+Rounds down to the start of the hour.
+
+```sql
+SELECT toStartOfHour(now());
+-- Result: 2026-03-03 14:00:00
+```
+
+### toStartOfMinute
+
+Rounds down to the start of the minute.
+
+```sql
+SELECT toStartOfMinute(now());
+-- Result: 2026-03-03 14:30:00
+```
+
+### toMonday
+
+Returns the Monday of the week.
+
+```sql
+SELECT toMonday(today());
+-- Result: 2026-03-02
+```
+
+### toLastDayOfMonth
+
+Returns the last day of the month.
+
+```sql
+SELECT toLastDayOfMonth(today());
+-- Result: 2026-03-31
+
+SELECT toLastDayOfMonth('2024-02-15');
+-- Result: 2024-02-29 (leap year)
+```
+
+## Date Formatting
+
+### formatDateTime
+
+Formats a DateTime using a format string.
+
+```sql
+SELECT formatDateTime(now(), '%Y-%m-%d %H:%M:%S');
+-- Result: '2026-03-03 14:30:45'
+
+SELECT formatDateTime(now(), '%W, %M %d, %Y');
+-- Result: 'Tuesday, March 03, 2026'
+
+SELECT formatDateTime(now(), '%Y-%m-%d', 'Europe/Amsterdam');
+-- With timezone
+```
+
+### Format Specifiers
+
+| Specifier | Description | Example |
+|-----------|-------------|----------|
+| `%Y` | 4-digit year | 2026 |
+| `%m` | Month (01-12) | 03 |
+| `%d` | Day (01-31) | 03 |
+| `%H` | Hour (00-23) | 14 |
+| `%M` | Minute (00-59) | 30 |
+| `%S` | Second (00-59) | 45 |
+| `%W` | Weekday name | Tuesday |
+| `%w` | Weekday (0-6) | 2 |
+
+### toYYYYMM / toYYYYMMDD / toYYYYMMDDhhmmss
+
+Formats as numeric strings.
+
+```sql
+SELECT toYYYYMM(today());
+-- Result: 202603
+
+SELECT toYYYYMMDD(today());
+-- Result: 20260303
+
+SELECT toYYYYMMDDhhmmss(now());
+-- Result: 20260303143045
+```
+
+## Time Intervals
+
+### dateDiff
+
+Calculates the difference between two dates.
+
+```sql
+SELECT dateDiff('day', yesterday(), today());
+-- Result: 1
+
+SELECT dateDiff('hour', '2023-01-01 00:00:00', '2023-01-01 05:30:00');
+-- Result: 5
+
+SELECT dateDiff('month', '2023-01-01', '2023-12-31');
+-- Result: 11
+```
+
+### age
+
+Calculates age or time difference.
+
+```sql
+SELECT age('year', toDate('1990-05-15'), today());
+-- Result: 35
+```
+
+## ISO Week Functions
+
+### toISOWeek
+
+Returns the ISO week number (1-53).
+
+```sql
+SELECT toISOWeek(today());
+-- Result: 10
+```
+
+### toISOYear
+
+Returns the ISO year.
+
+```sql
+SELECT toISOYear('2023-01-01');
+-- Result: 2022 (belongs to last week of 2022)
+```
+
+## Quarter Functions
+
+### toQuarter
+
+Returns the quarter (1-4).
+
+```sql
+SELECT toQuarter(today());
+-- Result: 1
+
+SELECT toQuarter('2023-07-15');
+-- Result: 3
+```
+
+### toStartOfQuarter
+
+Rounds down to the start of the quarter.
+
+```sql
+SELECT toStartOfQuarter(today());
+-- Result: 2026-01-01
+```
+
+## Timezone Functions
+
+### toTimeZone
+
+Converts DateTime to a different timezone.
+
+```sql
+SELECT toTimeZone(now(), 'America/New_York');
+-- Converts to New York time
+
+SELECT toTimeZone(now(), 'Asia/Tokyo');
+-- Converts to Tokyo time
+```
+
+### timeZoneOf
+
+Returns the timezone of a DateTime.
+
+```sql
+SELECT timeZoneOf(now());
+-- Result: 'UTC' (or server default timezone)
+```
+
+### timeZoneOffset
+
+Returns timezone offset in seconds.
+
+```sql
+SELECT timeZoneOffset(now());
+-- Result: 0 (for UTC)
+```
+
+## Unix Timestamp Functions
+
+### toUnixTimestamp
+
+Converts to Unix timestamp (seconds since 1970-01-01).
+
+```sql
+SELECT toUnixTimestamp(now());
+-- Result: 1772773845
+
+SELECT toUnixTimestamp('2023-12-25 10:30:00');
+-- Result: 1703502600
+```
+
+### fromUnixTimestamp
+
+Converts Unix timestamp to DateTime.
+
+```sql
+SELECT fromUnixTimestamp(1703502600);
+-- Result: 2023-12-25 10:30:00
+```
+
+### toUnixTimestamp64Milli / Micro / Nano
+
+Converts to Unix timestamp with subsecond precision.
+
+```sql
+SELECT toUnixTimestamp64Milli(now64(3));
+-- Milliseconds since epoch
+
+SELECT toUnixTimestamp64Micro(now64(6));
+-- Microseconds since epoch
+```
+
+## Performance Tips
+
+1. **Use Date instead of DateTime** when time component isn't needed
+2. **Index on date columns** for efficient time-based queries
+3. **Use toStartOf* functions** for grouping by time periods
+4. **Avoid formatDateTime in WHERE** clauses - use native comparisons
+5. **Store times in UTC** and convert for display only
+
+## Common Patterns
+
+```sql
+-- Group by day
+SELECT 
+    toDate(timestamp) as date,
+    count() as events
+FROM events
+GROUP BY date;
+
+-- Last 7 days
+SELECT *
+FROM events
+WHERE timestamp >= today() - 7;
+
+-- Hour-by-hour analysis
+SELECT 
+    toStartOfHour(timestamp) as hour,
+    count() as events
+FROM events
+WHERE timestamp >= now() - INTERVAL 1 DAY
+GROUP BY hour
+ORDER BY hour;
+
+-- Month-over-month comparison
+SELECT 
+    toStartOfMonth(date) as month,
+    count() as current_month,
+    count() - lagInFrame(count()) OVER (ORDER BY month) as growth
+FROM events
+GROUP BY month;
+```
+
+## See Also
+
+- [Type Conversion Functions](/functions/type-conversion)
+- [Arithmetic Functions](/functions/arithmetic)
+- [Time Intervals](https://clickhouse.com/docs/en/sql-reference/data-types/special-data-types/interval)

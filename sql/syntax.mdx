@@ -1,0 +1,266 @@
+---
+title: SQL Syntax Overview
+description: Comprehensive guide to ClickHouse SQL syntax, keywords, and query structure
+---
+
+## Overview
+
+ClickHouse uses a SQL-like query language with extensions for high-performance analytical queries. The syntax follows standard SQL with ClickHouse-specific enhancements.
+
+## Basic Query Structure
+
+```sql
+SELECT [DISTINCT] [TOP n] expression_list
+[FROM table_expression]
+[PREWHERE condition]
+[WHERE condition]
+[GROUP BY expression_list] [WITH ROLLUP | WITH CUBE | WITH TOTALS]
+[HAVING condition]
+[WINDOW window_definition]
+[QUALIFY condition]
+[ORDER BY expression_list] [WITH FILL]
+[LIMIT [n, ]m] [WITH TIES]
+[OFFSET k]
+[SETTINGS setting = value, ...]
+```
+
+## Identifiers and Literals
+
+### Identifiers
+
+Identifiers (table names, column names, etc.) can be:
+
+- **Unquoted**: Must start with a letter or underscore, contain only letters, numbers, and underscores
+- **Quoted**: Use backticks for special characters or reserved keywords
+
+<CodeGroup>
+```sql Unquoted Identifiers
+SELECT user_id, event_time FROM events;
+```
+
+```sql Quoted Identifiers
+SELECT `user-id`, `event time` FROM `my-table`;
+```
+</CodeGroup>
+
+### Literals
+
+<CodeGroup>
+```sql Numeric Literals
+SELECT 42, 3.14159, -100, 1e10, 0xFF, 0b1010;
+```
+
+```sql String Literals
+SELECT 'Hello, World!', 'Can\'t', "Double quoted";
+```
+
+```sql Date and Time Literals
+SELECT DATE '2024-01-15', TIMESTAMP '2024-01-15 10:30:00';
+```
+
+```sql Array and Tuple Literals
+SELECT [1, 2, 3], (1, 'a', 3.14);
+```
+</CodeGroup>
+
+## Comments
+
+<CodeGroup>
+```sql Single-line Comments
+-- This is a comment
+SELECT 1; -- inline comment
+```
+
+```sql Multi-line Comments
+/* This is a
+   multi-line comment */
+SELECT /* inline */ 1;
+```
+</CodeGroup>
+
+## Keywords
+
+ClickHouse supports standard SQL keywords with extensions:
+
+### Query Keywords
+
+| Keyword | Purpose |
+|---------|----------|
+| `SELECT` | Retrieve data from tables |
+| `FROM` | Specify source tables |
+| `WHERE` | Filter rows |
+| `PREWHERE` | ClickHouse-specific early filtering |
+| `GROUP BY` | Group rows for aggregation |
+| `HAVING` | Filter grouped results |
+| `ORDER BY` | Sort results |
+| `LIMIT` | Restrict number of rows |
+| `OFFSET` | Skip rows |
+| `DISTINCT` | Remove duplicates |
+| `WITH TOTALS` | Add totals row for aggregations |
+| `QUALIFY` | Filter window function results |
+
+### Table Keywords
+
+| Keyword | Purpose |
+|---------|----------|
+| `JOIN` | Combine tables |
+| `INNER JOIN` | Match rows from both tables |
+| `LEFT JOIN` | Include all rows from left table |
+| `RIGHT JOIN` | Include all rows from right table |
+| `FULL JOIN` | Include all rows from both tables |
+| `CROSS JOIN` | Cartesian product |
+| `SEMI JOIN` | Left semi join |
+| `ANTI JOIN` | Left anti join |
+| `ARRAY JOIN` | Expand arrays |
+| `USING` | Join on common columns |
+| `ON` | Join condition |
+
+## Expression Syntax
+
+### Column References
+
+<CodeGroup>
+```sql Simple Column
+SELECT column_name FROM table_name;
+```
+
+```sql Qualified Column
+SELECT table_name.column_name FROM table_name;
+```
+
+```sql Database Qualified
+SELECT database.table.column FROM database.table;
+```
+</CodeGroup>
+
+### Aliases
+
+<CodeGroup>
+```sql Column Aliases
+SELECT column_name AS alias_name,
+       another_column alias2  -- AS is optional
+FROM table_name;
+```
+
+```sql Table Aliases
+SELECT t.column FROM table_name AS t;
+SELECT t.column FROM table_name t;  -- AS is optional
+```
+</CodeGroup>
+
+## Subqueries
+
+<CodeGroup>
+```sql Scalar Subquery
+SELECT (SELECT max(price) FROM products) AS max_price;
+```
+
+```sql IN Subquery
+SELECT * FROM users
+WHERE user_id IN (SELECT user_id FROM active_sessions);
+```
+
+```sql FROM Subquery
+SELECT avg(total) FROM (
+    SELECT sum(amount) AS total
+    FROM orders
+    GROUP BY user_id
+);
+```
+</CodeGroup>
+
+## WITH Clause (CTE)
+
+<CodeGroup>
+```sql Single CTE
+WITH top_users AS (
+    SELECT user_id, count() AS cnt
+    FROM events
+    GROUP BY user_id
+    ORDER BY cnt DESC
+    LIMIT 100
+)
+SELECT * FROM top_users;
+```
+
+```sql Multiple CTEs
+WITH
+    total_revenue AS (SELECT sum(amount) AS total FROM orders),
+    avg_order AS (SELECT avg(amount) AS avg FROM orders)
+SELECT * FROM total_revenue, avg_order;
+```
+</CodeGroup>
+
+## CASE Expressions
+
+<CodeGroup>
+```sql Simple CASE
+SELECT
+    CASE status
+        WHEN 'active' THEN 'Active User'
+        WHEN 'inactive' THEN 'Inactive User'
+        ELSE 'Unknown'
+    END AS user_status
+FROM users;
+```
+
+```sql Searched CASE
+SELECT
+    CASE
+        WHEN age < 18 THEN 'Minor'
+        WHEN age < 65 THEN 'Adult'
+        ELSE 'Senior'
+    END AS age_group
+FROM users;
+```
+</CodeGroup>
+
+## Query Settings
+
+Add settings to control query execution:
+
+```sql
+SELECT * FROM large_table
+SETTINGS max_threads = 4, max_memory_usage = 10000000000;
+```
+
+## Special Syntax
+
+### ARRAY JOIN
+
+Expand arrays into separate rows:
+
+```sql
+SELECT user_id, tag
+FROM users
+ARRAY JOIN tags AS tag;
+```
+
+### PREWHERE Optimization
+
+Early filtering for better performance:
+
+```sql
+SELECT *
+FROM events
+PREWHERE date >= '2024-01-01'
+WHERE user_id > 1000;
+```
+
+### FINAL Modifier
+
+Get final version of deduplicated data:
+
+```sql
+SELECT * FROM users FINAL
+WHERE status = 'active';
+```
+
+## Reference
+
+For detailed information, see:
+
+- [SELECT Query Syntax](/sql/select)
+- [INSERT Statements](/sql/insert)
+- [DDL and DML Statements](/sql/statements)
+- [SQL Operators](/sql/operators)

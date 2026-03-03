@@ -1,0 +1,512 @@
+---
+title: Special Engines
+description: In-memory, distributed, and virtual table engines for specific use cases
+---
+
+Special engines provide unique capabilities for specific scenarios: in-memory storage, distributed queries, table unions, and dictionary lookups.
+
+## Memory
+
+In-memory storage for temporary data (`src/Storages/StorageMemory.h:20-24`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2
+) ENGINE = Memory();
+```
+
+### Characteristics
+
+From `src/Storages/StorageMemory.h:39-72`:
+
+- Engine name: `"Memory"` (line 39)
+- Data stored as blocks in RAM (line 23)
+- Parallel inserts: `supportsParallelInsert() = true` (line 65)
+- Supports subcolumns: `supportsSubcolumns() = true` (line 66)
+- Prefers smaller blocks: `prefersLargeBlocks() = false` (line 70)
+- Evenly distributed reads: `hasEvenlyDistributedRead() = true` (line 72)
+
+### Use Cases
+
+- Temporary tables
+- Query intermediate results
+- Caching small datasets
+- Global subqueries
+- Testing and development
+
+### Example
+
+```sql
+CREATE TABLE temp_results (
+    user_id UInt64,
+    total_amount Decimal(10,2)
+) ENGINE = Memory();
+
+INSERT INTO temp_results
+SELECT 
+    user_id,
+    sum(amount) AS total_amount
+FROM orders
+WHERE order_date >= today() - INTERVAL 7 DAY
+GROUP BY user_id;
+
+SELECT * FROM temp_results WHERE total_amount > 1000;
+```
+
+### Global Subqueries
+
+From `src/Storages/StorageMemory.h:92-127`:
+
+```sql
+-- Delayed reads for GLOBAL IN subqueries
+-- Ensures data is populated before read
+SELECT * FROM distributed_table
+WHERE user_id GLOBAL IN (
+    SELECT user_id FROM memory_table
+);
+```
+
+<Accordion title="Memory Engine Details">
+  From `src/Storages/StorageMemory.h:135-145`:
+  
+  - Uses `MultiVersion<Blocks>` for storage (line 135)
+  - Thread-safe with mutex (line 137)
+  - Atomic size tracking (line 141-142)
+  - Snapshot support for consistent reads (line 43-49)
+  - Configurable settings via `MemorySettings` (line 144)
+</Accordion>
+
+### Operations
+
+```sql
+-- Mutations supported
+DELETE FROM memory_table WHERE id < 100;
+UPDATE memory_table SET status = 'processed' WHERE id = 1;
+
+-- Truncate
+TRUNCATE TABLE memory_table;
+
+-- Backup and restore
+BACKUP TABLE memory_table TO Disk('backups', 'memory.zip');
+RESTORE TABLE memory_table FROM Disk('backups', 'memory.zip');
+```
+
+### Performance
+
+```sql
+-- Check memory usage
+SELECT 
+    name,
+    formatReadableSize(total_bytes) AS size,
+    total_rows AS rows
+FROM system.tables
+WHERE engine = 'Memory' AND database = currentDatabase();
+```
+
+<Warning>
+  Data is **not persistent**. All data is lost on server restart or table drop.
+</Warning>
+
+## Distributed
+
+Distribute queries across multiple shards (`src/Storages/StorageDistributed.h:39-44`).
+
+### Syntax
+
+```sql
+CREATE TABLE distributed_table (
+    column1 Type1,
+    column2 Type2
+) ENGINE = Distributed(
+    cluster_name,
+    database_name,
+    table_name,
+    [sharding_key],
+    [policy_name]
+);
+```
+
+### Parameters
+
+From `src/Storages/StorageDistributed.h:53-69`:
+
+- **cluster_name**: Cluster defined in config (line 60)
+- **database_name**: Remote database name (line 58)
+- **table_name**: Remote table name (line 59)
+- **sharding_key**: Expression for shard selection (line 62)
+- **policy_name**: Storage policy for async inserts (line 63)
+
+### Features
+
+From `src/Storages/StorageDistributed.h:73-87`:
+
+- Engine name: `"Distributed"` (line 73)
+- Sampling support: `supportsSampling() = true` (line 75)
+- FINAL support: `supportsFinal() = true` (line 76)
+- PREWHERE support: `supportsPrewhere() = true` (line 77)
+- Subcolumns: `supportsSubcolumns() = true` (line 78)
+- Remote flag: `isRemote() = true` (line 86)
+
+### Use Cases
+
+- Horizontal scaling
+- Sharded databases
+- Multi-datacenter deployments
+- Parallel query execution
+
+### Example: Sharded Table
+
+```sql
+-- Define cluster in config.xml:
+-- <clickhouse>
+--   <remote_servers>
+--     <events_cluster>
+--       <shard>
+--         <replica><host>node1</host><port>9000</port></replica>
+--       </shard>
+--       <shard>
+--         <replica><host>node2</host><port>9000</port></replica>
+--       </shard>
+--     </events_cluster>
+--   </remote_servers>
+-- </clickhouse>
+
+-- Create local table on each shard
+CREATE TABLE events_local (
+    event_date Date,
+    user_id UInt64,
+    event_type String
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (event_date, user_id);
+
+-- Create distributed table
+CREATE TABLE events_distributed AS events_local
+ENGINE = Distributed(
+    events_cluster,      -- cluster name
+    currentDatabase(),   -- database
+    events_local,        -- local table
+    cityHash64(user_id)  -- sharding key
+);
+
+-- Queries automatically distributed
+SELECT event_type, count()
+FROM events_distributed
+GROUP BY event_type;
+```
+
+### Sharding Strategies
+
+```sql
+-- Hash-based sharding
+ENGINE = Distributed(cluster, db, table, cityHash64(user_id))
+
+-- Random sharding
+ENGINE = Distributed(cluster, db, table, rand())
+
+-- Range-based sharding
+ENGINE = Distributed(cluster, db, table, intDiv(user_id, 1000000))
+
+-- No sharding (broadcast)
+ENGINE = Distributed(cluster, db, table)
+```
+
+<Accordion title="Distributed Insert Modes">
+  Two insert modes available:
+  
+  **Synchronous** (default):
+  - Writes directly to shards
+  - Waits for all shards
+  - Transactional
+  
+  **Asynchronous**:
+  - Writes to local directory first
+  - Background send to shards
+  - Higher throughput
+  - Requires storage policy
+</Accordion>
+
+### Settings
+
+```sql
+CREATE TABLE dist ENGINE = Distributed(...)
+SETTINGS 
+    fsync_after_insert = 1,           -- Sync after write
+    fsync_directories = 1,            -- Sync directories
+    bytes_to_throw_insert = 0,        -- Limit for async inserts
+    bytes_to_delay_insert = 0,        -- Threshold to delay inserts
+    max_delay_to_insert = 60;         -- Max insert delay
+```
+
+## Merge
+
+Virtual table representing union of multiple tables (`src/Storages/StorageMerge.h:18-21`).
+
+### Syntax
+
+```sql
+-- Match tables by regex
+CREATE TABLE merge_table (
+    column1 Type1,
+    column2 Type2
+) ENGINE = Merge(
+    database_name_or_regex,
+    table_name_regex
+);
+
+-- Explicit table list
+CREATE TABLE merge_table ENGINE = Merge(
+    currentDatabase(),
+    'table1|table2|table3'
+);
+```
+
+### Parameters
+
+From `src/Storages/StorageMerge.h:26-42`:
+
+- **source_database_name_or_regexp**: Database name or regex (line 30)
+- **database_is_regexp**: Whether database param is regex (line 31)
+- **source_table_regexp**: Table name regex (line 41)
+
+### Features
+
+From `src/Storages/StorageMerge.h:44-56`:
+
+- Engine name: `"Merge"` (line 44)
+- Sampling: `supportsSampling() = true` (line 49)
+- FINAL: `supportsFinal() = true` (line 50)
+- PREWHERE: Dynamic based on source tables (line 53)
+
+### Use Cases
+
+- Query multiple partitions as one table
+- Historical data across tables
+- Multi-tenant queries
+- Table versioning
+
+### Example: Monthly Tables
+
+```sql
+-- Create monthly tables
+CREATE TABLE events_2024_01 (
+    timestamp DateTime,
+    event String
+) ENGINE = MergeTree() ORDER BY timestamp;
+
+CREATE TABLE events_2024_02 (
+    timestamp DateTime,
+    event String
+) ENGINE = MergeTree() ORDER BY timestamp;
+
+CREATE TABLE events_2024_03 (
+    timestamp DateTime,
+    event String
+) ENGINE = MergeTree() ORDER BY timestamp;
+
+-- Create Merge table
+CREATE TABLE events_all (
+    timestamp DateTime,
+    event String
+) ENGINE = Merge(currentDatabase(), '^events_');
+
+-- Query all months at once
+SELECT 
+    toYYYYMM(timestamp) AS month,
+    event,
+    count() AS event_count
+FROM events_all
+GROUP BY month, event
+ORDER BY month, event_count DESC;
+```
+
+### Dynamic Table Discovery
+
+```sql
+-- Database regex
+CREATE TABLE cross_db_merge ENGINE = Merge(
+    'analytics_.*',  -- Matches analytics_prod, analytics_dev, etc.
+    'events'
+);
+
+-- Table regex
+CREATE TABLE all_logs ENGINE = Merge(
+    currentDatabase(),
+    '.*_log$'  -- Matches any table ending with _log
+);
+```
+
+### Virtual Columns
+
+```sql
+-- Access source table info
+SELECT 
+    _table,          -- Source table name
+    _database,       -- Source database name
+    count() AS rows
+FROM events_all
+GROUP BY _table, _database;
+```
+
+<Warning>
+  Merge is a **virtual table**. It does not store data, only reads from source tables.
+  Schema must match across all source tables.
+</Warning>
+
+## Dictionary
+
+Table-like access to dictionaries (`src/Storages/StorageDictionary.h:17-18`).
+
+### Syntax
+
+```sql
+CREATE TABLE dict_table (
+    key UInt64,
+    value String
+) ENGINE = Dictionary(dictionary_name);
+```
+
+### Dictionary Locations
+
+From `src/Storages/StorageDictionary.h:23-38`:
+
+- **DictionaryDatabase**: Auto-created in Dictionary database
+- **SameDatabaseAndNameAsDictionary**: Auto-created with dictionary
+- **Custom**: Explicitly created by user
+
+### Features
+
+From `src/Storages/StorageDictionary.h:61-85`:
+
+- Engine name: `"Dictionary"` (line 61)
+- Optimized reads: Key-value lookups
+- No parallel output: `parallelizeOutputAfterReading() = false` (line 79)
+- Is dictionary: `isDictionary() = true` (line 85)
+
+### Use Cases
+
+- Fast key-value lookups
+- Reference data (countries, categories)
+- Enrichment in queries
+- Replace small dimension tables
+
+### Example
+
+```sql
+-- Create dictionary
+CREATE DICTIONARY country_dict (
+    code UInt16,
+    name String,
+    capital String
+)
+PRIMARY KEY code
+SOURCE(CLICKHOUSE(
+    HOST 'localhost'
+    PORT 9000
+    TABLE 'countries'
+    DB 'reference'
+))
+LAYOUT(FLAT())
+LIFETIME(3600);
+
+-- Create Dictionary engine table
+CREATE TABLE countries ENGINE = Dictionary(country_dict);
+
+-- Use like regular table
+SELECT * FROM countries WHERE code = 840;  -- USA
+
+-- Join with other tables
+SELECT 
+    c.name AS country,
+    count() AS visits
+FROM events e
+JOIN countries c ON e.country_code = c.code
+GROUP BY c.name;
+```
+
+### Dictionary Functions
+
+```sql
+-- Direct dictionary access (more efficient)
+SELECT dictGet('country_dict', 'name', toUInt16(840));
+
+-- Table access (more flexible)
+SELECT name FROM countries WHERE code = 840;
+```
+
+<Accordion title="Dictionary Engine Advantages">
+  - Automatic reloading based on LIFETIME
+  - Memory-efficient storage layouts (FLAT, HASHED, CACHE)
+  - Optimized for lookups
+  - Can source from external databases
+  - Supports complex keys
+</Accordion>
+
+## Comparison Matrix
+
+| Feature | Memory | Distributed | Merge | Dictionary |
+|---------|--------|-------------|-------|------------|
+| **Storage** | RAM | Remote | Virtual | External |
+| **Persistence** | No | Yes | Yes | Yes |
+| **Replication** | No | Yes | Depends | No |
+| **Use Case** | Temporary | Sharding | Union | Lookups |
+| **Performance** | Fastest | Parallel | Variable | Fast |
+| **Source** | StorageMemory.h:25 | StorageDistributed.h:45 | StorageMerge.h:21 | StorageDictionary.h:17 |
+
+## Other Special Engines
+
+### Null
+
+Discards all writes, returns empty on reads:
+
+```sql
+CREATE TABLE null_table (x UInt64) ENGINE = Null();
+-- Useful for testing or discarding data
+```
+
+### Buffer
+
+Buffers data in RAM before flushing to another table:
+
+```sql
+CREATE TABLE buffer_table ENGINE = Buffer(
+    database, target_table,
+    num_layers, min_time, max_time,
+    min_rows, max_rows, min_bytes, max_bytes
+);
+```
+
+### Set
+
+Stores unique values for IN clauses:
+
+```sql
+CREATE TABLE allowed_ids (id UInt64) ENGINE = Set();
+INSERT INTO allowed_ids VALUES (1), (2), (3);
+SELECT * FROM events WHERE user_id IN allowed_ids;
+```
+
+### Join
+
+Pre-built join table:
+
+```sql
+CREATE TABLE join_table (
+    key UInt64,
+    value String
+) ENGINE = Join(ANY, LEFT, key);
+```
+
+## Source Code References
+
+- `src/Storages/StorageMemory.h:20-147` - Memory engine
+- `src/Storages/StorageDistributed.h:39-100` - Distributed engine
+- `src/Storages/StorageMerge.h:18-100` - Merge engine
+- `src/Storages/StorageDictionary.h:17-109` - Dictionary engine
+- `src/Storages/StorageNull.h` - Null engine
+- `src/Storages/StorageBuffer.h` - Buffer engine
+- `src/Storages/StorageSet.h` - Set engine
+- `src/Storages/StorageJoin.h` - Join engine

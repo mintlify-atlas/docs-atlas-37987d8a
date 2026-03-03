@@ -1,0 +1,547 @@
+---
+title: Monitoring
+description: System tables, metrics, and monitoring ClickHouse servers
+---
+
+ClickHouse provides extensive monitoring capabilities through system tables, metrics, and logs that expose server state, query performance, and resource utilization.
+
+## System Tables Overview
+
+ClickHouse exposes monitoring data through the `system` database, which contains special tables that provide runtime information.
+
+```sql
+-- List all system tables
+SHOW TABLES FROM system;
+
+-- View system database
+USE system;
+```
+
+## Key System Tables
+
+### system.metrics
+
+Current values of metrics (point-in-time snapshots):
+
+```sql
+SELECT 
+    metric,
+    value,
+    description
+FROM system.metrics
+ORDER BY metric;
+
+-- Monitor query execution
+SELECT * FROM system.metrics 
+WHERE metric LIKE '%Query%';
+
+-- Monitor memory usage
+SELECT * FROM system.metrics 
+WHERE metric LIKE '%Memory%';
+```
+
+**Key metrics:**
+- `Query` - Number of executing queries
+- `Merge` - Number of executing merges
+- `PartMutation` - Number of executing mutations
+- `MemoryTracking` - Total memory usage
+- `BackgroundPoolTask` - Background tasks in queue
+
+### system.asynchronous_metrics
+
+Metrics calculated asynchronously (updated periodically):
+
+```sql
+SELECT 
+    metric,
+    value,
+    description
+FROM system.asynchronous_metrics
+ORDER BY metric;
+
+-- CPU and memory info
+SELECT * FROM system.asynchronous_metrics 
+WHERE metric IN (
+    'OSMemoryTotal',
+    'OSMemoryAvailable',
+    'MemoryResident',
+    'NumberOfCPUCores'
+);
+```
+
+### system.events
+
+Cumulative counters for events since server start:
+
+```sql
+SELECT 
+    event,
+    value,
+    description
+FROM system.events
+ORDER BY value DESC
+LIMIT 20;
+
+-- Query-related events
+SELECT * FROM system.events 
+WHERE event LIKE '%Query%';
+
+-- Network events
+SELECT * FROM system.events 
+WHERE event LIKE '%Network%';
+```
+
+### system.processes
+
+Currently running queries:
+
+```sql
+SELECT 
+    user,
+    query_id,
+    elapsed,
+    read_rows,
+    read_bytes,
+    memory_usage,
+    peak_memory_usage,
+    query
+FROM system.processes
+ORDER BY elapsed DESC;
+
+-- Find long-running queries
+SELECT 
+    query_id,
+    user,
+    elapsed,
+    formatReadableSize(memory_usage) AS memory,
+    query
+FROM system.processes
+WHERE elapsed > 60
+ORDER BY elapsed DESC;
+
+-- Kill a query
+KILL QUERY WHERE query_id = 'query_id_here';
+```
+
+**Schema columns:**
+- `is_initial_query` - Whether query is from user or internal
+- `user` - User executing the query
+- `query_id` - Unique query identifier
+- `address` - Client IP address
+- `elapsed` - Query execution time in seconds
+- `read_rows` / `read_bytes` - Rows and bytes read
+- `memory_usage` - Current memory usage
+- `peak_memory_usage` - Peak memory usage
+- `query` - Query text
+- `thread_ids` - Thread IDs executing the query
+
+### system.query_log
+
+Log of executed queries (requires configuration):
+
+```sql
+-- Recent queries
+SELECT 
+    type,
+    event_time,
+    query_duration_ms,
+    read_rows,
+    formatReadableSize(read_bytes) AS read_bytes,
+    formatReadableSize(memory_usage) AS memory,
+    user,
+    query
+FROM system.query_log
+WHERE event_date = today()
+ORDER BY event_time DESC
+LIMIT 100;
+
+-- Slow queries
+SELECT 
+    type,
+    event_time,
+    query_duration_ms / 1000 AS duration_sec,
+    user,
+    query
+FROM system.query_log
+WHERE query_duration_ms > 10000
+  AND type = 'QueryFinish'
+ORDER BY query_duration_ms DESC
+LIMIT 20;
+
+-- Failed queries
+SELECT 
+    event_time,
+    user,
+    exception,
+    query
+FROM system.query_log
+WHERE type = 'ExceptionWhileProcessing'
+ORDER BY event_time DESC
+LIMIT 50;
+```
+
+Enable query log in `config.xml`:
+
+```xml
+<clickhouse>
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <partition_by>toYYYYMM(event_date)</partition_by>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+    </query_log>
+</clickhouse>
+```
+
+### system.tables
+
+Information about tables:
+
+```sql
+SELECT 
+    database,
+    name,
+    engine,
+    formatReadableSize(total_bytes) AS size,
+    formatReadableQuantity(total_rows) AS rows
+FROM system.tables
+WHERE database NOT IN ('system', 'information_schema')
+ORDER BY total_bytes DESC;
+
+-- Table with most rows
+SELECT 
+    database,
+    name,
+    total_rows,
+    formatReadableSize(total_bytes) AS size
+FROM system.tables
+ORDER BY total_rows DESC
+LIMIT 10;
+```
+
+### system.parts
+
+Information about data parts (MergeTree tables):
+
+```sql
+SELECT 
+    database,
+    table,
+    partition,
+    name,
+    rows,
+    formatReadableSize(bytes_on_disk) AS size,
+    modification_time
+FROM system.parts
+WHERE active
+ORDER BY modification_time DESC
+LIMIT 100;
+
+-- Parts per table
+SELECT 
+    database,
+    table,
+    count() AS parts_count,
+    sum(rows) AS total_rows,
+    formatReadableSize(sum(bytes_on_disk)) AS total_size
+FROM system.parts
+WHERE active
+GROUP BY database, table
+ORDER BY parts_count DESC;
+```
+
+### system.merges
+
+Currently running merges:
+
+```sql
+SELECT 
+    database,
+    table,
+    elapsed,
+    progress,
+    num_parts,
+    formatReadableSize(total_size_bytes_compressed) AS size,
+    formatReadableSize(bytes_read_uncompressed) AS read,
+    formatReadableSize(bytes_written_uncompressed) AS written
+FROM system.merges
+ORDER BY elapsed DESC;
+```
+
+### system.mutations
+
+Table mutations (ALTER operations):
+
+```sql
+SELECT 
+    database,
+    table,
+    mutation_id,
+    command,
+    create_time,
+    is_done,
+    parts_to_do
+FROM system.mutations
+WHERE NOT is_done
+ORDER BY create_time DESC;
+```
+
+### system.replicas
+
+Replication status (for ReplicatedMergeTree tables):
+
+```sql
+SELECT 
+    database,
+    table,
+    is_leader,
+    is_readonly,
+    absolute_delay,
+    queue_size,
+    inserts_in_queue,
+    merges_in_queue
+FROM system.replicas
+ORDER BY absolute_delay DESC;
+
+-- Check replication lag
+SELECT 
+    database,
+    table,
+    absolute_delay,
+    log_max_index - log_pointer AS log_lag
+FROM system.replicas
+WHERE absolute_delay > 60;
+```
+
+### system.clusters
+
+Configured clusters:
+
+```sql
+SELECT 
+    cluster,
+    shard_num,
+    replica_num,
+    host_name,
+    port,
+    is_local
+FROM system.clusters
+ORDER BY cluster, shard_num, replica_num;
+```
+
+### system.users
+
+User accounts:
+
+```sql
+SELECT 
+    name,
+    id,
+    storage,
+    auth_type,
+    host_ip,
+    host_names,
+    default_roles_all
+FROM system.users;
+```
+
+### system.quota_usage
+
+Current quota usage:
+
+```sql
+SELECT 
+    quota_name,
+    quota_key,
+    duration,
+    queries,
+    max_queries,
+    errors,
+    max_errors,
+    execution_time,
+    max_execution_time
+FROM system.quota_usage;
+```
+
+## Monitoring Queries
+
+### Database Size
+
+```sql
+SELECT 
+    database,
+    formatReadableSize(sum(bytes_on_disk)) AS size,
+    formatReadableQuantity(sum(rows)) AS rows,
+    count() AS tables
+FROM system.parts
+WHERE active
+GROUP BY database
+ORDER BY sum(bytes_on_disk) DESC;
+```
+
+### Memory Usage
+
+```sql
+SELECT 
+    formatReadableSize(value) AS memory
+FROM system.asynchronous_metrics
+WHERE metric = 'MemoryResident';
+
+-- Per-query memory usage
+SELECT 
+    user,
+    query_id,
+    formatReadableSize(memory_usage) AS memory,
+    formatReadableSize(peak_memory_usage) AS peak_memory,
+    query
+FROM system.processes
+ORDER BY memory_usage DESC;
+```
+
+### Disk Space
+
+```sql
+SELECT 
+    name,
+    path,
+    formatReadableSize(free_space) AS free,
+    formatReadableSize(total_space) AS total,
+    round(free_space / total_space * 100, 2) AS free_percent
+FROM system.disks;
+```
+
+### Query Performance
+
+```sql
+-- Average query duration by user
+SELECT 
+    user,
+    count() AS queries,
+    avg(query_duration_ms) AS avg_duration_ms,
+    quantile(0.95)(query_duration_ms) AS p95_duration_ms
+FROM system.query_log
+WHERE type = 'QueryFinish'
+  AND event_date = today()
+GROUP BY user
+ORDER BY queries DESC;
+
+-- Most frequent queries
+SELECT 
+    normalizedQueryHash(query) AS query_hash,
+    count() AS count,
+    avg(query_duration_ms) AS avg_duration_ms,
+    any(query) AS example_query
+FROM system.query_log
+WHERE type = 'QueryFinish'
+  AND event_date >= today() - 7
+GROUP BY query_hash
+ORDER BY count DESC
+LIMIT 20;
+```
+
+## Metrics Export
+
+### Prometheus Integration
+
+ClickHouse can export metrics in Prometheus format:
+
+```bash
+curl http://localhost:9363/metrics
+```
+
+Configure Prometheus endpoint in `config.xml`:
+
+```xml
+<clickhouse>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <events>true</events>
+    </prometheus>
+</clickhouse>
+```
+
+### Grafana Dashboard
+
+Use the official ClickHouse Grafana datasource:
+
+1. Install ClickHouse datasource plugin
+2. Import ClickHouse dashboards from Grafana marketplace
+3. Query system tables directly in Grafana
+
+## Alerting
+
+### Example Alert Queries
+
+```sql
+-- High replication lag
+SELECT 
+    database,
+    table,
+    absolute_delay
+FROM system.replicas
+WHERE absolute_delay > 300;  -- 5 minutes
+
+-- Too many parts (need merge)
+SELECT 
+    database,
+    table,
+    count() AS parts
+FROM system.parts
+WHERE active
+GROUP BY database, table
+HAVING parts > 300;
+
+-- Failed queries rate
+SELECT count() AS failed_queries
+FROM system.query_log
+WHERE type = 'ExceptionWhileProcessing'
+  AND event_time > now() - INTERVAL 5 MINUTE;
+
+-- Low disk space
+SELECT 
+    name,
+    path,
+    free_space / total_space AS free_ratio
+FROM system.disks
+WHERE free_ratio < 0.1;  -- Less than 10% free
+```
+
+## Best Practices
+
+<Steps>
+
+1. **Enable query logging**
+   - Configure `query_log` for performance analysis
+   - Set appropriate retention policies
+   - Monitor log table size
+
+2. **Monitor key metrics**
+   - Query execution time and count
+   - Memory usage per query and server-wide
+   - Disk space and I/O
+   - Replication lag
+   - Merge and mutation progress
+
+3. **Set up alerting**
+   - High replication lag
+   - Too many table parts
+   - Failed queries
+   - Low disk space
+   - Memory pressure
+
+4. **Regular health checks**
+   - Review slow queries daily
+   - Check for failed mutations
+   - Monitor part count per table
+   - Verify replica synchronization
+
+5. **Performance analysis**
+   - Use `EXPLAIN` for query optimization
+   - Profile queries with `system.query_log`
+   - Monitor cache hit rates
+   - Track resource usage trends
+
+</Steps>

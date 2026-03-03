@@ -1,0 +1,398 @@
+---
+title: Data Formats
+description: Comprehensive guide to ClickHouse data formats including JSON, Parquet, CSV, Arrow, Avro, and more
+---
+
+ClickHouse supports a wide variety of data formats for both input and output operations. This flexibility allows seamless integration with different data sources and destinations.
+
+## Overview
+
+Formats are specified using the `FORMAT` clause in queries or when creating tables with file-based table engines.
+
+```sql
+SELECT * FROM table FORMAT JSON;
+```
+
+## Common Data Formats
+
+### JSON Formats
+
+ClickHouse provides multiple JSON format variants for different use cases.
+
+#### JSONEachRow
+
+One JSON object per row, separated by newlines. Ideal for streaming data.
+
+```sql
+SELECT name, age, email 
+FROM users 
+FORMAT JSONEachRow;
+```
+
+Output:
+```json
+{"name":"Alice","age":30,"email":"alice@example.com"}
+{"name":"Bob","age":25,"email":"bob@example.com"}
+```
+
+**Format Settings:**
+- `input_format_json_read_bools_as_numbers` - Read boolean values as numbers (default: true)
+- `input_format_json_read_numbers_as_strings` - Allow reading numbers from quoted strings (default: true)
+- `input_format_json_validate_utf8` - Validate UTF-8 sequences (default: false)
+- `output_format_json_quote_64bit_integers` - Quote 64-bit integers in output (default: false)
+- `output_format_json_escape_forward_slashes` - Escape forward slashes (default: true)
+
+#### JSON
+
+Complete JSON document with metadata, statistics, and rows array.
+
+```sql
+SELECT * FROM events LIMIT 3 FORMAT JSON;
+```
+
+Output:
+```json
+{
+  "meta": [
+    {"name": "event_id", "type": "UInt64"},
+    {"name": "event_time", "type": "DateTime"},
+    {"name": "user_id", "type": "String"}
+  ],
+  "data": [
+    {"event_id": 1, "event_time": "2026-03-01 10:00:00", "user_id": "user123"},
+    {"event_id": 2, "event_time": "2026-03-01 10:05:00", "user_id": "user456"}
+  ],
+  "rows": 2,
+  "statistics": {
+    "elapsed": 0.001234,
+    "rows_read": 2,
+    "bytes_read": 128
+  }
+}
+```
+
+#### JSONCompactEachRow
+
+Compact format with values as arrays instead of objects.
+
+```sql
+SELECT name, age FROM users FORMAT JSONCompactEachRow;
+```
+
+Output:
+```json
+["Alice", 30]
+["Bob", 25]
+```
+
+#### JSONColumns
+
+Column-oriented JSON format for better compression and performance.
+
+```sql
+SELECT name, age FROM users FORMAT JSONColumns;
+```
+
+Output:
+```json
+{
+  "name": ["Alice", "Bob", "Charlie"],
+  "age": [30, 25, 35]
+}
+```
+
+### CSV (Comma-Separated Values)
+
+Standard CSV format with extensive customization options.
+
+```sql
+SELECT * FROM products FORMAT CSV;
+```
+
+**Format Settings:**
+- `format_csv_delimiter` - Field delimiter (default: `,`)
+- `format_csv_null_representation` - NULL representation (default: `\N`)
+- `format_csv_allow_single_quotes` - Allow single quotes for strings (default: true)
+- `format_csv_allow_double_quotes` - Allow double quotes for strings (default: true)
+- `input_format_csv_empty_as_default` - Treat empty fields as default values (default: false)
+- `input_format_csv_enum_as_number` - Read enums as numbers (default: false)
+- `input_format_csv_arrays_as_nested_csv` - Parse arrays in nested CSV format (default: false)
+- `input_format_csv_use_best_effort_in_schema_inference` - Use sophisticated schema inference (default: true)
+- `input_format_csv_skip_first_lines` - Number of lines to skip at the beginning (default: 0)
+- `input_format_csv_trim_whitespaces` - Trim whitespaces from values (default: true)
+
+<CodeGroup>
+```sql Standard CSV
+SELECT product_id, name, price 
+FROM products 
+FORMAT CSV;
+```
+
+```sql Custom Delimiter
+SELECT * FROM data 
+FORMAT CSV 
+SETTINGS format_csv_delimiter = '|';
+```
+
+```sql With Header
+SELECT * FROM users 
+FORMAT CSVWithNames;
+```
+</CodeGroup>
+
+### TabSeparated
+
+Tab-separated values format, efficient for large datasets.
+
+```sql
+SELECT * FROM logs FORMAT TabSeparated;
+```
+
+**Variants:**
+- `TabSeparated` - Basic format
+- `TabSeparatedWithNames` - Include column names as first row
+- `TabSeparatedWithNamesAndTypes` - Include column names and types
+- `TabSeparatedRaw` - Without escaping
+
+### Parquet
+
+Apache Parquet columnar storage format, optimized for analytics.
+
+```sql
+SELECT * FROM large_dataset FORMAT Parquet;
+```
+
+**Format Settings:**
+
+**Read Settings:**
+- `input_format_parquet_allow_missing_columns` - Allow missing columns (default: false)
+- `input_format_parquet_case_insensitive_column_matching` - Case-insensitive matching (default: false)
+- `input_format_parquet_filter_push_down` - Enable filter pushdown optimization (default: true)
+- `input_format_parquet_bloom_filter_push_down` - Use Bloom filters for filtering (default: true)
+- `input_format_parquet_preserve_order` - Preserve row order from file (default: false)
+- `input_format_parquet_use_native_reader` - Use native Parquet reader (default: false)
+- `input_format_parquet_local_time_as_utc` - Treat local time as UTC (default: true)
+
+**Write Settings:**
+- `output_format_parquet_row_group_size` - Rows per row group (default: 1000000)
+- `output_format_parquet_row_group_size_bytes` - Bytes per row group (default: 512MB)
+- `output_format_parquet_string_as_string` - Output String as Parquet STRING (default: false)
+- `output_format_parquet_version` - Parquet version: `1.0`, `2.4`, `2.6`, `2.latest` (default: `2.latest`)
+- `output_format_parquet_compression_method` - Compression: `none`, `snappy`, `gzip`, `lz4`, `zstd`, `brotli` (default: `snappy`)
+- `output_format_parquet_write_page_index` - Write page index for better filtering (default: false)
+- `output_format_parquet_data_page_size` - Data page size (default: 1MB)
+
+<CodeGroup>
+```sql Read Parquet
+SELECT count(*), avg(price) 
+FROM file('data.parquet', Parquet);
+```
+
+```sql Write Parquet with Compression
+SELECT * FROM sales 
+INTO OUTFILE 'sales.parquet' 
+FORMAT Parquet 
+SETTINGS output_format_parquet_compression_method = 'zstd';
+```
+
+```sql Parquet with Schema
+INSERT INTO TABLE sales 
+FROM INFILE 'input.parquet' 
+FORMAT Parquet;
+```
+</CodeGroup>
+
+### Arrow
+
+Apache Arrow columnar format for in-memory analytics.
+
+```sql
+SELECT * FROM metrics FORMAT Arrow;
+```
+
+**Format Settings:**
+- `input_format_arrow_allow_missing_columns` - Allow missing columns (default: false)
+- `input_format_arrow_case_insensitive_column_matching` - Case-insensitive matching (default: false)
+- `output_format_arrow_low_cardinality_as_dictionary` - Use dictionary encoding (default: false)
+- `output_format_arrow_string_as_string` - Output String as Arrow STRING (default: false)
+- `output_format_arrow_compression_method` - Compression: `none`, `lz4_frame`, `zstd` (default: `none`)
+
+### Avro
+
+Apache Avro format with schema evolution support.
+
+```sql
+SELECT * FROM events FORMAT Avro;
+```
+
+**Format Settings:**
+- `format_avro_schema_registry_url` - Confluent Schema Registry URL
+- `input_format_avro_allow_missing_fields` - Allow missing fields (default: false)
+- `output_format_avro_codec` - Compression codec: `null`, `deflate`, `snappy`
+- `output_format_avro_sync_interval` - Sync marker interval (default: 16KB)
+- `output_format_avro_rows_in_file` - Rows per output file (default: 1)
+
+<CodeGroup>
+```sql Read Avro
+SELECT * FROM file('data.avro', Avro);
+```
+
+```sql Write Avro with Schema Registry
+SELECT * FROM events 
+FORMAT Avro 
+SETTINGS format_avro_schema_registry_url = 'http://schema-registry:8081';
+```
+</CodeGroup>
+
+### ORC
+
+Apache ORC (Optimized Row Columnar) format.
+
+```sql
+SELECT * FROM analytics FORMAT ORC;
+```
+
+**Format Settings:**
+- `input_format_orc_allow_missing_columns` - Allow missing columns (default: false)
+- `input_format_orc_case_insensitive_column_matching` - Case-insensitive matching (default: false)
+- `input_format_orc_filter_push_down` - Enable filter pushdown (default: true)
+
+## Binary Formats
+
+### Native
+
+ClickHouse native binary format, most efficient for ClickHouse-to-ClickHouse data transfer.
+
+```sql
+SELECT * FROM large_table FORMAT Native;
+```
+
+### RowBinary
+
+Compact row-oriented binary format.
+
+```sql
+SELECT id, name, value FROM data FORMAT RowBinary;
+```
+
+**Variants:**
+- `RowBinary` - Basic format
+- `RowBinaryWithNames` - With column names
+- `RowBinaryWithNamesAndTypes` - With column names and types
+
+### Protobuf
+
+Protocol Buffers format for structured data.
+
+```sql
+SELECT * FROM users 
+FORMAT Protobuf 
+SETTINGS format_schema = 'schema:User';
+```
+
+**Format Settings:**
+- `format_schema` - Path to .proto schema file and message type
+- `input_format_protobuf_flatten_google_wrappers` - Flatten Google wrapper types (default: false)
+
+### CapnProto
+
+Cap'n Proto format for efficient serialization.
+
+```sql
+SELECT * FROM data 
+FORMAT CapnProto 
+SETTINGS format_schema = 'schema:Message';
+```
+
+### MsgPack
+
+MessagePack binary format.
+
+```sql
+SELECT * FROM events FORMAT MsgPack;
+```
+
+## Specialized Formats
+
+### Values
+
+Format used in INSERT statements.
+
+```sql
+INSERT INTO users VALUES 
+  ('Alice', 30, 'alice@example.com'),
+  ('Bob', 25, 'bob@example.com');
+```
+
+### Template
+
+Custom format with user-defined templates.
+
+```sql
+SELECT * FROM logs 
+FORMAT Template 
+SETTINGS 
+  format_template_resultset = 'template.resultset',
+  format_template_row = 'template.row';
+```
+
+### CustomSeparated
+
+Highly customizable text format.
+
+```sql
+SELECT * FROM data 
+FORMAT CustomSeparated 
+SETTINGS 
+  format_custom_field_delimiter = '|',
+  format_custom_row_before_delimiter = '(',
+  format_custom_row_after_delimiter = ')';
+```
+
+## Format Selection Guide
+
+| Format | Best For | Compression | Schema Evolution |
+|--------|----------|-------------|------------------|
+| Native | ClickHouse-to-ClickHouse | Excellent | Limited |
+| Parquet | Analytics, cold storage | Excellent | Good |
+| Arrow | In-memory processing | Good | Limited |
+| Avro | Schema evolution | Good | Excellent |
+| JSON | APIs, readability | Poor | Good |
+| CSV | Universal compatibility | Poor | None |
+| Protobuf | Microservices | Good | Excellent |
+
+## Usage Examples
+
+<CodeGroup>
+```sql Export to JSON
+SELECT user_id, event_type, timestamp 
+FROM events 
+WHERE date = today() 
+INTO OUTFILE 'events.json' 
+FORMAT JSONEachRow;
+```
+
+```sql Import from CSV
+INSERT INTO products 
+FROM INFILE 'products.csv' 
+FORMAT CSVWithNames;
+```
+
+```sql Convert Formats
+INSERT INTO TABLE output_parquet
+SELECT * FROM file('input.csv', CSV);
+```
+
+```sql Stream Processing
+SELECT * 
+FROM file('data/*.parquet', Parquet) 
+WHERE status = 'active' 
+FORMAT Native;
+```
+</CodeGroup>
+
+## See Also
+
+- [Kafka Integration](/integration/kafka) - Using formats with Kafka
+- [MySQL Integration](/integration/mysql) - Data format compatibility
+- [PostgreSQL Integration](/integration/postgresql) - Format mapping

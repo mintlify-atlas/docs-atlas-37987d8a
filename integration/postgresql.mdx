@@ -1,0 +1,804 @@
+---
+title: PostgreSQL Integration
+description: Connect ClickHouse to PostgreSQL databases using the PostgreSQL table engine and database engine
+---
+
+ClickHouse provides native PostgreSQL integration, enabling seamless access to PostgreSQL databases for both reading and writing data.
+
+## PostgreSQL Table Engine
+
+The PostgreSQL table engine allows you to perform SELECT and INSERT queries on data stored in a remote PostgreSQL server.
+
+### Basic Usage
+
+```sql
+CREATE TABLE postgresql_table (
+    id UInt32,
+    name String,
+    email String,
+    created_at DateTime
+) ENGINE = PostgreSQL(
+    'postgres-server:5432',
+    'database_name',
+    'table_name',
+    'username',
+    'password'
+);
+```
+
+### Complete Example
+
+```sql
+-- Connect to remote PostgreSQL table
+CREATE TABLE users_postgres (
+    user_id UInt64,
+    username String,
+    email String,
+    first_name String,
+    last_name String,
+    registration_date Date,
+    last_login DateTime,
+    is_active Boolean
+) ENGINE = PostgreSQL(
+    'postgres-prod.example.com:5432',
+    'application_db',
+    'users',
+    'readonly_user',
+    'secure_password'
+);
+
+-- Query PostgreSQL data
+SELECT 
+    username,
+    email,
+    registration_date,
+    last_login
+FROM users_postgres
+WHERE is_active = true
+  AND registration_date >= '2026-01-01'
+ORDER BY last_login DESC
+LIMIT 100;
+
+-- Insert data into PostgreSQL
+INSERT INTO users_postgres VALUES
+    (1001, 'alice', 'alice@example.com', 'Alice', 'Smith', '2026-03-01', now(), true),
+    (1002, 'bob', 'bob@example.com', 'Bob', 'Jones', '2026-03-01', now(), true);
+```
+
+## PostgreSQL Database Engine
+
+Create a database that automatically maps all PostgreSQL tables and schemas.
+
+```sql
+-- Create PostgreSQL database
+CREATE DATABASE postgres_db
+ENGINE = PostgreSQL(
+    'postgres-server:5432',
+    'source_database',
+    'username',
+    'password'[,
+    'schema',
+    use_table_cache
+]);
+
+-- Access PostgreSQL tables
+SELECT * FROM postgres_db.users;
+SELECT * FROM postgres_db.orders;
+SELECT * FROM postgres_db.products;
+
+-- Query specific schema
+SELECT * FROM postgres_db."public.customers";
+SELECT * FROM postgres_db."analytics.events";
+
+-- Join ClickHouse and PostgreSQL data
+SELECT 
+    ch.order_id,
+    ch.order_total,
+    pg.customer_name,
+    pg.customer_email,
+    pg.customer_tier
+FROM clickhouse_orders ch
+INNER JOIN postgres_db.customers pg ON ch.customer_id = pg.id
+WHERE ch.order_date >= today() - INTERVAL 30 DAY;
+```
+
+## Connection Parameters
+
+### PostgreSQL Table Engine Syntax
+
+```sql
+PostgreSQL(
+    'host:port',
+    'database',
+    'table',
+    'user',
+    'password'[,
+    'schema',
+    'on_conflict'
+])
+```
+
+**Parameters:**
+- `host:port` - PostgreSQL server address and port (default: 5432)
+- `database` - PostgreSQL database name
+- `table` - PostgreSQL table name
+- `user` - PostgreSQL username
+- `password` - PostgreSQL password
+- `schema` - PostgreSQL schema name (optional, default: 'public')
+- `on_conflict` - ON CONFLICT clause for INSERT (optional)
+
+### Connection Settings
+
+```sql
+CREATE TABLE postgres_advanced (
+    id UInt64,
+    data String
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'table', 'user', 'pass')
+SETTINGS
+    postgresql_connection_pool_size = 16,
+    postgresql_connection_pool_wait_timeout = 5000,
+    postgresql_connection_attempt_timeout = 2;
+```
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `postgresql_connection_pool_size` | Max connections in pool | 16 |
+| `postgresql_connection_pool_wait_timeout` | Wait timeout in ms | 5000 |
+| `postgresql_connection_pool_retries` | Connection retry attempts | 2 |
+| `postgresql_connection_attempt_timeout` | Connection timeout in seconds | 2 |
+| `postgresql_connection_pool_auto_close_connection` | Auto-close idle connections | true |
+
+## Data Type Mapping
+
+ClickHouse automatically converts PostgreSQL data types:
+
+| PostgreSQL Type | ClickHouse Type |
+|----------------|----------------|
+| SMALLINT | Int16 |
+| INTEGER | Int32 |
+| BIGINT | Int64 |
+| SERIAL | UInt32 |
+| BIGSERIAL | UInt64 |
+| REAL | Float32 |
+| DOUBLE PRECISION | Float64 |
+| NUMERIC(P, S) | Decimal(P, S) |
+| DATE | Date |
+| TIMESTAMP | DateTime |
+| TIMESTAMP WITH TIME ZONE | DateTime64(6) |
+| BOOLEAN | UInt8 (0/1) |
+| CHAR, VARCHAR, TEXT | String |
+| BYTEA | String |
+| UUID | UUID |
+| JSON, JSONB | String |
+| ARRAY | Array(T) |
+| ENUM | Enum8 / Enum16 |
+| POINT, POLYGON, etc. | Tuple or String |
+
+### Handling NULLs
+
+```sql
+-- Enable nullable types for external tables
+SELECT * FROM postgresql_table
+SETTINGS external_table_functions_use_nulls = 1;
+
+-- Results in Nullable columns:
+-- id Nullable(Int32)
+-- name Nullable(String)
+```
+
+### Array Type Handling
+
+```sql
+-- PostgreSQL array types
+CREATE TABLE postgres_arrays (
+    id UInt64,
+    tags Array(String),      -- PostgreSQL: text[]
+    scores Array(Float64),   -- PostgreSQL: double precision[]
+    flags Array(UInt8)       -- PostgreSQL: boolean[]
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'arrays_table', 'user', 'pass');
+
+SELECT 
+    id,
+    tags,
+    arraySum(scores) AS total_score
+FROM postgres_arrays
+WHERE has(tags, 'important');
+```
+
+## Insert Modes
+
+### Standard INSERT
+
+```sql
+CREATE TABLE postgres_insert (
+    id UInt64,
+    name String,
+    value Float64
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'table', 'user', 'pass');
+
+INSERT INTO postgres_insert VALUES (1, 'test', 100.5);
+```
+
+### INSERT with ON CONFLICT
+
+Handle conflicts using PostgreSQL's ON CONFLICT clause:
+
+```sql
+CREATE TABLE postgres_upsert (
+    id UInt64,
+    name String,
+    counter UInt64,
+    updated_at DateTime
+) ENGINE = PostgreSQL(
+    'postgres:5432',
+    'db',
+    'table',
+    'user',
+    'pass',
+    'public',
+    'ON CONFLICT (id) DO UPDATE SET counter = EXCLUDED.counter + table.counter, updated_at = EXCLUDED.updated_at'
+);
+
+-- Will execute: INSERT ... ON CONFLICT (id) DO UPDATE SET ...
+INSERT INTO postgres_upsert VALUES 
+    (1, 'item', 5, now()),
+    (2, 'item2', 10, now());
+```
+
+### Batch Inserts
+
+```sql
+-- Efficient batch insert
+INSERT INTO postgres_table
+SELECT * FROM large_clickhouse_table
+SETTINGS max_insert_block_size = 100000;
+```
+
+## Schema Support
+
+### Working with Schemas
+
+```sql
+-- Specify schema explicitly
+CREATE TABLE analytics_events (
+    event_id UInt64,
+    event_type String,
+    timestamp DateTime
+) ENGINE = PostgreSQL(
+    'postgres:5432',
+    'application_db',
+    'events',
+    'user',
+    'pass',
+    'analytics'  -- Schema name
+);
+
+-- Query different schemas
+SELECT * FROM postgres_db."public.users";
+SELECT * FROM postgres_db."analytics.events";
+SELECT * FROM postgres_db."archive.old_data";
+```
+
+## Query Optimization
+
+### Filter Pushdown
+
+ClickHouse pushes WHERE conditions to PostgreSQL:
+
+```sql
+-- This query sends the filter to PostgreSQL
+SELECT * FROM postgres_table
+WHERE id > 1000 
+  AND status = 'active'
+  AND created_at >= '2026-01-01';
+
+-- PostgreSQL receives: 
+-- SELECT * FROM table WHERE id > 1000 AND status = 'active' AND created_at >= '2026-01-01'
+```
+
+### Join Optimization
+
+```sql
+-- Efficient join: PostgreSQL data is filtered first
+SELECT 
+    pg.user_id,
+    pg.username,
+    count(*) AS event_count
+FROM postgres_db.users pg
+INNER JOIN clickhouse_events ch ON ch.user_id = pg.user_id
+WHERE pg.is_active = true
+  AND ch.event_date >= today() - INTERVAL 7 DAY
+GROUP BY pg.user_id, pg.username;
+```
+
+### Using Subqueries
+
+```sql
+-- PostgreSQL aggregation pushed down
+SELECT *
+FROM (
+    SELECT 
+        category,
+        count(*) AS product_count,
+        avg(price) AS avg_price
+    FROM postgres_db.products
+    GROUP BY category
+) pg
+WHERE product_count > 100;
+```
+
+## Advanced Patterns
+
+### Data Migration
+
+<CodeGroup>
+```sql Full Table Copy
+-- Create ClickHouse table from PostgreSQL schema
+CREATE TABLE users_local 
+AS postgres_db.users
+ENGINE = MergeTree()
+ORDER BY user_id;
+
+-- Copy all data
+INSERT INTO users_local SELECT * FROM postgres_db.users;
+```
+
+```sql Incremental Sync
+-- Create sync tracking table
+CREATE TABLE postgres_sync_state (
+    table_name String,
+    last_sync_id UInt64,
+    last_sync_timestamp DateTime,
+    sync_date Date DEFAULT today()
+) ENGINE = MergeTree()
+ORDER BY (table_name, sync_date);
+
+-- Incremental sync function
+INSERT INTO users_local
+SELECT * FROM postgres_db.users
+WHERE user_id > (
+    SELECT last_sync_id 
+    FROM postgres_sync_state 
+    WHERE table_name = 'users' 
+    ORDER BY sync_date DESC 
+    LIMIT 1
+);
+
+-- Update sync state
+INSERT INTO postgres_sync_state VALUES (
+    'users',
+    (SELECT max(user_id) FROM users_local),
+    now(),
+    today()
+);
+```
+
+```sql Change Data Capture (CDC)
+-- Using PostgreSQL timestamp
+CREATE MATERIALIZED VIEW users_cdc
+ENGINE = MergeTree()
+ORDER BY user_id
+REFRESH EVERY 60 SECOND
+AS 
+SELECT * FROM postgres_db.users
+WHERE updated_at >= (
+    SELECT max(updated_at) FROM users_local
+);
+```
+</CodeGroup>
+
+### Hybrid Queries
+
+```sql
+-- Combine PostgreSQL and ClickHouse data
+SELECT 
+    pg.customer_id,
+    pg.customer_name,
+    pg.customer_segment,
+    sum(ch.order_total) AS total_revenue,
+    count(ch.order_id) AS order_count,
+    max(ch.order_date) AS last_order_date
+FROM postgres_db.customers pg
+LEFT JOIN clickhouse_orders ch ON ch.customer_id = pg.customer_id
+WHERE pg.is_active = true
+GROUP BY pg.customer_id, pg.customer_name, pg.customer_segment
+HAVING total_revenue > 1000
+ORDER BY total_revenue DESC;
+```
+
+### Materialized PostgreSQL
+
+Automatic replication from PostgreSQL with CDC:
+
+```sql
+-- Create MaterializedPostgreSQL database
+CREATE DATABASE materialized_postgres
+ENGINE = MaterializedPostgreSQL(
+    'postgres-server:5432',
+    'source_database',
+    'username',
+    'password'
+) SETTINGS
+    materialized_postgresql_tables_list = 'users,orders,products',
+    materialized_postgresql_schema = 'public';
+
+-- Data is automatically synchronized
+SELECT * FROM materialized_postgres.users;
+
+-- Check replication status
+SELECT 
+    database,
+    table,
+    is_replicated,
+    replication_lag_seconds
+FROM system.materialized_postgresql_tables
+WHERE database = 'materialized_postgres';
+```
+
+## Using postgresql() Table Function
+
+Query PostgreSQL without creating a table:
+
+```sql
+-- Direct query
+SELECT * FROM postgresql(
+    'postgres-server:5432',
+    'database',
+    'table',
+    'user',
+    'password'
+) WHERE id > 1000;
+
+-- With schema
+SELECT * FROM postgresql(
+    'postgres:5432',
+    'db',
+    'table',
+    'user',
+    'pass',
+    'analytics'
+);
+
+-- Insert using table function
+INSERT INTO postgresql(
+    'postgres:5432',
+    'db',
+    'target_table',
+    'user',
+    'pass'
+)
+SELECT * FROM clickhouse_table WHERE date = today();
+
+-- Join with table function
+SELECT 
+    ch.*,
+    pg.metadata
+FROM clickhouse_events ch
+INNER JOIN postgresql(
+    'postgres:5432', 'db', 'metadata', 'user', 'pass'
+) pg ON ch.id = pg.event_id;
+```
+
+## PostgreSQL-Specific Features
+
+### JSONB Support
+
+```sql
+CREATE TABLE postgres_json (
+    id UInt64,
+    data String  -- Maps to PostgreSQL JSONB
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'json_table', 'user', 'pass');
+
+-- Query JSON data
+SELECT 
+    id,
+    JSONExtractString(data, 'name') AS name,
+    JSONExtractInt(data, 'age') AS age,
+    JSONExtractArrayRaw(data, 'tags') AS tags
+FROM postgres_json;
+```
+
+### Array Operations
+
+```sql
+-- PostgreSQL array functions
+SELECT 
+    id,
+    tags,
+    arrayMap(x -> upper(x), tags) AS upper_tags,
+    arrayFilter(x -> x != '', tags) AS filtered_tags,
+    has(tags, 'important') AS has_important
+FROM postgres_arrays;
+```
+
+### UUID Type
+
+```sql
+CREATE TABLE postgres_uuids (
+    id UUID,
+    user_id UUID,
+    data String
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'uuid_table', 'user', 'pass');
+
+SELECT 
+    id,
+    user_id,
+    toString(id) AS id_string
+FROM postgres_uuids
+WHERE user_id = toUUID('550e8400-e29b-41d4-a716-446655440000');
+```
+
+## Connection Pooling
+
+```sql
+-- Configure connection pool
+CREATE TABLE postgres_pooled (
+    id UInt64,
+    data String
+) ENGINE = PostgreSQL('postgres:5432', 'db', 'table', 'user', 'pass')
+SETTINGS
+    postgresql_connection_pool_size = 32,
+    postgresql_connection_pool_wait_timeout = 10000,
+    postgresql_connection_pool_retries = 5;
+
+-- Monitor pool usage
+SELECT 
+    database,
+    table,
+    host,
+    port,
+    active_connections,
+    max_connections
+FROM system.postgresql_connections;
+```
+
+## Security
+
+### SSL/TLS Connections
+
+```xml
+<!-- config.xml -->
+<postgresql>
+    <ssl_mode>require</ssl_mode>
+    <ssl_cert>/path/to/client-cert.pem</ssl_cert>
+    <ssl_key>/path/to/client-key.pem</ssl_key>
+    <ssl_ca>/path/to/ca.pem</ssl_ca>
+</postgresql>
+```
+
+### Using Named Collections
+
+```sql
+-- Create named collection (in config.xml)
+<clickhouse>
+    <named_collections>
+        <postgres_production>
+            <host>postgres-prod.example.com</host>
+            <port>5432</port>
+            <user>readonly_user</user>
+            <password>secure_password</password>
+            <database>production_db</database>
+            <schema>public</schema>
+        </postgres_production>
+    </named_collections>
+</clickhouse>
+
+-- Use named collection
+CREATE TABLE users
+ENGINE = PostgreSQL(postgres_production, table='users');
+```
+
+### Read-Only Access
+
+```sql
+-- Create with read-only user
+CREATE TABLE postgres_readonly (
+    id UInt64,
+    data String
+) ENGINE = PostgreSQL(
+    'postgres:5432',
+    'db',
+    'table',
+    'readonly_user',
+    'password'
+);
+
+-- Queries work
+SELECT * FROM postgres_readonly;
+
+-- Inserts fail (PostgreSQL permission denied)
+-- INSERT INTO postgres_readonly VALUES (1, 'test');  -- Error
+```
+
+## Performance Best Practices
+
+### Optimize Data Transfer
+
+```sql
+-- Select only needed columns
+SELECT id, name, email FROM postgres_db.users
+WHERE is_active = true;
+
+-- Use aggregations in PostgreSQL
+SELECT 
+    category,
+    count(*) AS cnt,
+    avg(price) AS avg_price
+FROM postgres_db.products
+GROUP BY category;
+```
+
+### Batch Operations
+
+```sql
+-- Insert in large batches
+INSERT INTO postgres_table
+SELECT * FROM source_table
+SETTINGS 
+    max_insert_block_size = 100000,
+    max_insert_threads = 4;
+```
+
+### Connection Management
+
+```sql
+-- Use persistent connections for frequent queries
+SETTINGS postgresql_connection_pool_auto_close_connection = 0;
+
+-- Increase pool size for concurrent workloads
+SETTINGS postgresql_connection_pool_size = 64;
+```
+
+### Index Utilization
+
+```sql
+-- Ensure PostgreSQL can use indexes
+SELECT * FROM postgres_table
+WHERE indexed_column = 'value'     -- Uses index
+  AND another_index_col > 1000;    -- Uses index
+
+-- Check query plan
+EXPLAIN indexes = 1
+SELECT * FROM postgres_db.large_table WHERE id = 12345;
+```
+
+## Monitoring
+
+### Connection Statistics
+
+```sql
+-- View active PostgreSQL connections
+SELECT 
+    database,
+    table,
+    host,
+    port,
+    user,
+    active_connections,
+    max_connections,
+    total_queries
+FROM system.postgresql_connections;
+```
+
+### Query Performance
+
+```sql
+-- Analyze query performance
+SELECT 
+    query,
+    query_duration_ms,
+    read_rows,
+    read_bytes,
+    memory_usage
+FROM system.query_log
+WHERE has(tables, 'postgres_db.users')
+  AND type = 'QueryFinish'
+ORDER BY query_duration_ms DESC
+LIMIT 20;
+```
+
+### Replication Lag (MaterializedPostgreSQL)
+
+```sql
+SELECT 
+    database,
+    table,
+    replication_lag_seconds,
+    last_replication_time
+FROM system.materialized_postgresql_tables
+WHERE replication_lag_seconds > 60;
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+```sql
+-- Test connection
+SELECT * FROM postgresql(
+    'postgres:5432',
+    'db',
+    'table',
+    'user',
+    'pass'
+) LIMIT 1;
+
+-- Check error logs
+SELECT * FROM system.text_log
+WHERE message LIKE '%PostgreSQL%'
+  OR message LIKE '%pqxx%'
+ORDER BY event_time DESC
+LIMIT 100;
+```
+
+### Type Conversion Errors
+
+```sql
+-- Use external_table_functions_use_nulls for nullable columns
+SELECT * FROM postgres_table
+SETTINGS external_table_functions_use_nulls = 1;
+
+-- Explicit casting
+SELECT 
+    CAST(postgres_column AS String) AS converted
+FROM postgres_table;
+```
+
+### Performance Issues
+
+```sql
+-- Increase connection pool
+ALTER TABLE postgres_table 
+MODIFY SETTING postgresql_connection_pool_size = 64;
+
+-- Increase timeout
+ALTER TABLE postgres_table 
+MODIFY SETTING postgresql_connection_pool_wait_timeout = 10000;
+
+-- Disable auto-close for persistent workloads
+ALTER TABLE postgres_table 
+MODIFY SETTING postgresql_connection_pool_auto_close_connection = 0;
+```
+
+## Migration from PostgreSQL
+
+### Complete Migration Strategy
+
+```sql
+-- Step 1: Create database mirror
+CREATE DATABASE postgres_mirror
+ENGINE = PostgreSQL(
+    'source-postgres:5432',
+    'production_db',
+    'migration_user',
+    'password'
+);
+
+-- Step 2: Create ClickHouse tables
+CREATE TABLE users_ch AS postgres_mirror.users
+ENGINE = MergeTree()
+ORDER BY user_id;
+
+CREATE TABLE orders_ch AS postgres_mirror.orders
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(order_date)
+ORDER BY (order_date, order_id);
+
+-- Step 3: Initial data load
+INSERT INTO users_ch SELECT * FROM postgres_mirror.users;
+INSERT INTO orders_ch SELECT * FROM postgres_mirror.orders;
+
+-- Step 4: Set up incremental sync
+CREATE MATERIALIZED VIEW orders_sync
+REFRESH EVERY 300 SECOND
+TO orders_ch
+AS SELECT * FROM postgres_mirror.orders
+WHERE updated_at >= (SELECT max(updated_at) FROM orders_ch);
+```
+
+## See Also
+
+- [MySQL Integration](/integration/mysql) - MySQL connectivity
+- [Data Formats](/integration/data-formats) - Supported data formats
+- [Client Libraries](/integration/client-libraries) - Connection interfaces
+- [Kafka Integration](/integration/kafka) - Real-time data streaming

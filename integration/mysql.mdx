@@ -1,0 +1,527 @@
+---
+title: MySQL Integration
+description: Connect ClickHouse to MySQL databases using the MySQL table engine and database engine
+---
+
+ClickHouse provides comprehensive MySQL integration, allowing you to read from and write to MySQL databases, as well as use MySQL as a data source.
+
+## MySQL Table Engine
+
+The MySQL table engine allows you to perform SELECT and INSERT queries on data stored in a remote MySQL server.
+
+### Basic Usage
+
+```sql
+CREATE TABLE mysql_table (
+    id UInt32,
+    name String,
+    created_at DateTime
+) ENGINE = MySQL(
+    'mysql-server:3306',
+    'database_name',
+    'table_name',
+    'username',
+    'password'
+);
+```
+
+### Complete Example
+
+```sql
+-- Connect to remote MySQL table
+CREATE TABLE orders_mysql (
+    order_id UInt64,
+    customer_id UInt64,
+    product_name String,
+    quantity UInt32,
+    price Decimal(10, 2),
+    order_date Date,
+    status String
+) ENGINE = MySQL(
+    'mysql-prod.example.com:3306',
+    'ecommerce',
+    'orders',
+    'readonly_user',
+    'secure_password'
+);
+
+-- Query MySQL data
+SELECT 
+    product_name,
+    sum(quantity * price) AS total_revenue,
+    count() AS order_count
+FROM orders_mysql
+WHERE order_date >= '2026-01-01'
+GROUP BY product_name
+ORDER BY total_revenue DESC
+LIMIT 10;
+
+-- Insert data into MySQL
+INSERT INTO orders_mysql VALUES
+    (1001, 5001, 'Laptop', 1, 999.99, '2026-03-01', 'pending'),
+    (1002, 5002, 'Mouse', 2, 29.99, '2026-03-01', 'shipped');
+```
+
+## MySQL Database Engine
+
+Create a database that automatically maps all MySQL tables.
+
+```sql
+-- Create MySQL database
+CREATE DATABASE mysql_db
+ENGINE = MySQL(
+    'mysql-server:3306',
+    'source_database',
+    'username',
+    'password'
+);
+
+-- Access MySQL tables
+SELECT * FROM mysql_db.users;
+SELECT * FROM mysql_db.orders;
+SELECT * FROM mysql_db.products;
+
+-- Join ClickHouse and MySQL data
+SELECT 
+    ch.event_id,
+    ch.timestamp,
+    m.user_name,
+    m.email
+FROM clickhouse_events ch
+JOIN mysql_db.users m ON ch.user_id = m.user_id
+WHERE ch.timestamp >= today();
+```
+
+## Connection Parameters
+
+### MySQL Table Engine Syntax
+
+```sql
+MySQL('host:port', 'database', 'table', 'user', 'password'[, replace_query, 'on_duplicate_clause'])
+```
+
+**Parameters:**
+- `host:port` - MySQL server address and port (default: 3306)
+- `database` - MySQL database name
+- `table` - MySQL table name
+- `user` - MySQL username
+- `password` - MySQL password
+- `replace_query` - Use `REPLACE INTO` instead of `INSERT INTO` (optional, default: false)
+- `on_duplicate_clause` - `ON DUPLICATE KEY UPDATE` clause (optional)
+
+### Connection Settings
+
+```sql
+CREATE TABLE mysql_advanced (
+    id UInt64,
+    data String
+) ENGINE = MySQL('mysql:3306', 'db', 'table', 'user', 'pass')
+SETTINGS
+    connection_pool_size = 16,
+    connection_auto_close = 1,
+    connection_max_tries = 3;
+```
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `connection_pool_size` | Maximum connections in pool | 16 |
+| `connection_auto_close` | Auto-close idle connections | true |
+| `connection_max_tries` | Connection retry attempts | 3 |
+
+## Data Type Mapping
+
+ClickHouse automatically converts MySQL data types:
+
+| MySQL Type | ClickHouse Type |
+|------------|----------------|
+| TINYINT | Int8 / UInt8 |
+| SMALLINT | Int16 / UInt16 |
+| INT, INTEGER | Int32 / UInt32 |
+| BIGINT | Int64 / UInt64 |
+| FLOAT | Float32 |
+| DOUBLE | Float64 |
+| DECIMAL(P, S) | Decimal(P, S) |
+| DATE | Date |
+| DATETIME | DateTime |
+| TIMESTAMP | DateTime |
+| VARCHAR, CHAR, TEXT | String |
+| BLOB, BINARY | String |
+| ENUM | Enum8 / Enum16 |
+| JSON | String |
+
+### Type Conversion Control
+
+```sql
+-- Control type conversion behavior
+SELECT * FROM mysql_table
+SETTINGS mysql_datatypes_support_level = 'decimal,datetime64';
+```
+
+Supported levels:
+- `decimal` - Convert MySQL DECIMAL to ClickHouse Decimal
+- `datetime64` - Convert MySQL DATETIME to DateTime64
+
+## Insert Modes
+
+### Standard INSERT
+
+```sql
+CREATE TABLE mysql_insert (
+    id UInt64,
+    name String,
+    value Float64
+) ENGINE = MySQL('mysql:3306', 'db', 'table', 'user', 'pass');
+
+INSERT INTO mysql_insert VALUES (1, 'test', 100.5);
+```
+
+### REPLACE Mode
+
+Use `REPLACE INTO` for upsert behavior:
+
+```sql
+CREATE TABLE mysql_replace (
+    id UInt64,
+    name String,
+    value Float64
+) ENGINE = MySQL(
+    'mysql:3306', 
+    'db', 
+    'table', 
+    'user', 
+    'pass',
+    1  -- Enable REPLACE mode
+);
+
+-- Will use REPLACE INTO
+INSERT INTO mysql_replace VALUES (1, 'updated', 200.5);
+```
+
+### ON DUPLICATE KEY UPDATE
+
+```sql
+CREATE TABLE mysql_upsert (
+    id UInt64,
+    name String,
+    counter UInt64
+) ENGINE = MySQL(
+    'mysql:3306',
+    'db',
+    'table',
+    'user',
+    'pass',
+    0,  -- Don't use REPLACE
+    'counter = counter + VALUES(counter), name = VALUES(name)'  -- ON DUPLICATE KEY clause
+);
+
+-- Will execute: INSERT ... ON DUPLICATE KEY UPDATE counter = counter + VALUES(counter)
+INSERT INTO mysql_upsert VALUES (1, 'item', 5);
+```
+
+## Query Optimization
+
+### Filter Pushdown
+
+ClickHouse pushes down WHERE conditions to MySQL:
+
+```sql
+-- This query sends the filter to MySQL
+SELECT * FROM mysql_table
+WHERE id > 1000 AND status = 'active';
+
+-- MySQL receives: SELECT * FROM table WHERE id > 1000 AND status = 'active'
+```
+
+### Limit Pushdown
+
+```sql
+-- LIMIT is pushed to MySQL
+SELECT * FROM mysql_table ORDER BY created_at DESC LIMIT 100;
+```
+
+### Controlling Query Transformation
+
+```sql
+-- Disable query optimization for complex queries
+SELECT * FROM mysql_table
+SETTINGS external_table_strict_query = 1;
+```
+
+## Advanced Patterns
+
+### Data Migration
+
+<CodeGroup>
+```sql Full Table Copy
+-- Create ClickHouse table
+CREATE TABLE orders_local AS mysql_db.orders
+ENGINE = MergeTree()
+ORDER BY order_id;
+
+-- Copy data
+INSERT INTO orders_local SELECT * FROM mysql_db.orders;
+```
+
+```sql Incremental Sync
+-- Track last sync
+CREATE TABLE sync_state (
+    table_name String,
+    last_id UInt64,
+    last_updated DateTime
+) ENGINE = MergeTree()
+ORDER BY table_name;
+
+-- Incremental copy
+INSERT INTO orders_local
+SELECT * FROM mysql_db.orders
+WHERE order_id > (
+    SELECT last_id FROM sync_state WHERE table_name = 'orders'
+);
+
+-- Update sync state
+INSERT INTO sync_state VALUES (
+    'orders',
+    (SELECT max(order_id) FROM orders_local),
+    now()
+);
+```
+
+```sql Real-time Replication
+-- Use materialized view pattern
+CREATE MATERIALIZED VIEW orders_sync
+ENGINE = MergeTree()
+ORDER BY order_id
+AS SELECT * FROM mysql_db.orders;
+
+-- Schedule periodic refresh
+CREATE MATERIALIZED VIEW orders_refresh
+REFRESH EVERY 60 SECOND
+TO orders_local
+AS SELECT * FROM mysql_db.orders;
+```
+</CodeGroup>
+
+### Hybrid Queries
+
+```sql
+-- Join MySQL and ClickHouse data
+SELECT 
+    m.customer_name,
+    m.email,
+    count() AS event_count,
+    max(c.event_time) AS last_event
+FROM clickhouse_events c
+INNER JOIN mysql_db.customers m ON c.customer_id = m.id
+WHERE c.event_time >= today() - INTERVAL 7 DAY
+GROUP BY m.customer_name, m.email
+ORDER BY event_count DESC
+LIMIT 100;
+```
+
+### Write-Through Cache
+
+```sql
+-- ClickHouse as cache layer
+CREATE TABLE customer_cache (
+    id UInt64,
+    name String,
+    email String,
+    cached_at DateTime DEFAULT now()
+) ENGINE = MergeTree()
+ORDER BY id
+TTL cached_at + INTERVAL 1 HOUR;  -- Cache for 1 hour
+
+-- Read from cache or MySQL
+SELECT 
+    id, name, email
+FROM (
+    SELECT id, name, email FROM customer_cache WHERE id = 12345
+    UNION ALL
+    SELECT id, name, email FROM mysql_db.customers WHERE id = 12345
+)
+LIMIT 1;
+```
+
+## Using mysql() Table Function
+
+Query MySQL without creating a table:
+
+```sql
+-- Direct query
+SELECT * FROM mysql(
+    'mysql-server:3306',
+    'database',
+    'table',
+    'user',
+    'password'
+) WHERE id > 1000;
+
+-- With settings
+SELECT * FROM mysql(
+    'mysql-server:3306',
+    'database',
+    'table',
+    'user',
+    'password'
+) SETTINGS connection_pool_size = 8;
+
+-- Insert using table function
+INSERT INTO mysql('mysql:3306', 'db', 'table', 'user', 'pass')
+SELECT * FROM clickhouse_table WHERE date = today();
+```
+
+## Connection Pooling
+
+```sql
+-- Configure connection pool
+CREATE TABLE mysql_pooled (
+    id UInt64,
+    data String
+) ENGINE = MySQL('mysql:3306', 'db', 'table', 'user', 'pass')
+SETTINGS
+    connection_pool_size = 32,
+    connection_auto_close = 0;  -- Keep connections open
+
+-- Monitor connections
+SELECT 
+    database,
+    table,
+    active_connections,
+    total_connections
+FROM system.mysql_connections;
+```
+
+## Security
+
+### Using Named Collections
+
+```sql
+-- Create named collection (in config.xml)
+<clickhouse>
+    <named_collections>
+        <mysql_production>
+            <host>mysql-prod.example.com</host>
+            <port>3306</port>
+            <user>readonly_user</user>
+            <password>secure_password</password>
+            <database>production_db</database>
+        </mysql_production>
+    </named_collections>
+</clickhouse>
+
+-- Use named collection
+CREATE TABLE orders
+ENGINE = MySQL(mysql_production, table='orders');
+```
+
+### SSL/TLS Connections
+
+```xml
+<!-- config.xml -->
+<mysql>
+    <ssl_ca>/path/to/ca.pem</ssl_ca>
+    <ssl_cert>/path/to/client-cert.pem</ssl_cert>
+    <ssl_key>/path/to/client-key.pem</ssl_key>
+</mysql>
+```
+
+## Performance Best Practices
+
+### Batch Inserts
+
+```sql
+-- Insert in batches for better performance
+INSERT INTO mysql_table
+SELECT * FROM large_table
+SETTINGS max_insert_block_size = 100000;
+```
+
+### Limit Data Transfer
+
+```sql
+-- Use projections to reduce data transfer
+SELECT 
+    customer_id,
+    sum(amount) AS total
+FROM mysql_db.orders
+GROUP BY customer_id;
+```
+
+### Index Usage
+
+```sql
+-- Ensure MySQL can use indexes
+SELECT * FROM mysql_table
+WHERE indexed_column = 'value'  -- Uses MySQL index
+  AND date >= '2026-01-01';      -- Uses MySQL index
+```
+
+## Monitoring
+
+```sql
+-- View active MySQL connections
+SELECT 
+    database,
+    table,
+    host,
+    port,
+    user,
+    active_connections,
+    total_connections
+FROM system.mysql_connections;
+
+-- Query performance
+SELECT 
+    query,
+    query_duration_ms,
+    read_rows,
+    read_bytes
+FROM system.query_log
+WHERE has(tables, 'mysql_db.orders')
+ORDER BY event_time DESC
+LIMIT 10;
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+```sql
+-- Test connection
+SELECT * FROM mysql('mysql:3306', 'db', 'table', 'user', 'pass') LIMIT 1;
+
+-- Check error logs
+SELECT * FROM system.text_log
+WHERE message LIKE '%MySQL%'
+ORDER BY event_time DESC
+LIMIT 100;
+```
+
+### Type Conversion Errors
+
+```sql
+-- Explicit type casting
+SELECT 
+    CAST(mysql_column AS String) AS converted_value
+FROM mysql_table;
+
+-- Change datatype support level
+SELECT * FROM mysql_table
+SETTINGS mysql_datatypes_support_level = '';
+```
+
+### Performance Issues
+
+```sql
+-- Increase connection pool
+ALTER TABLE mysql_table MODIFY SETTING connection_pool_size = 64;
+
+-- Disable auto-close for persistent connections
+ALTER TABLE mysql_table MODIFY SETTING connection_auto_close = 0;
+```
+
+## See Also
+
+- [PostgreSQL Integration](/integration/postgresql) - PostgreSQL connectivity
+- [Data Formats](/integration/data-formats) - Supported data formats
+- [Client Libraries](/integration/client-libraries) - Connection interfaces

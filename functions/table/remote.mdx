@@ -1,0 +1,528 @@
+---
+title: remote
+description: Query remote ClickHouse servers and clusters
+---
+
+# remote
+
+The `remote` table function allows querying remote ClickHouse servers without creating a `Distributed` table. It creates a temporary distributed table for query execution.
+
+## Syntax
+
+```sql
+remote(addresses_expr, [db, ]table[, user[, password]][, sharding_key])
+remote(named_collection[, option=value [,...]])
+
+remoteSecure(addresses_expr, [db, ]table[, user[, password]][, sharding_key])
+
+cluster(cluster_name, [db.]table[, sharding_key])
+clusterAllReplicas(cluster_name, [db.]table[, sharding_key])
+```
+
+### remote / remoteSecure
+
+<ParamField path="addresses_expr" type="String" required>
+  Remote server address(es). Can be:
+  - Single server: `'hostname:port'`
+  - Multiple servers: `'host1:port1,host2:port2'`
+  - Shard with replicas: `'host1:port1|host2:port2'`
+  - Pattern expansion: `'host{1..3}:9000'`, `'host{a,b}:9000'`
+  - Cluster name (predefined in config)
+</ParamField>
+
+<ParamField path="db" type="String" default="system">
+  Database name on the remote server(s). Defaults to `system` if not specified.
+</ParamField>
+
+<ParamField path="table" type="String" default="one">
+  Table name on the remote server(s). Can be:
+  - Table name: `'users'`
+  - Database.table: `'mydb.users'`
+  - Table function: Any table function supported by ClickHouse
+  
+  Defaults to `one` (a system table with a single row) if not specified.
+</ParamField>
+
+<ParamField path="user" type="String" default="default">
+  Username for authentication on the remote server(s).
+</ParamField>
+
+<ParamField path="password" type="String" default="">
+  Password for authentication on the remote server(s).
+</ParamField>
+
+<ParamField path="sharding_key" type="Expression">
+  Optional sharding expression for `INSERT` queries. Determines which shard receives each row when inserting data. Not required for `SELECT` queries.
+</ParamField>
+
+### cluster / clusterAllReplicas
+
+<ParamField path="cluster_name" type="String" required>
+  Name of the cluster as defined in the server configuration. If not specified for `cluster()`, uses `'default'` cluster.
+</ParamField>
+
+<ParamField path="db.table" type="String" required>
+  Database and table name on the cluster nodes. Can use `db.table` syntax or separate `'db', 'table'` arguments.
+</ParamField>
+
+<ParamField path="sharding_key" type="Expression">
+  Optional sharding expression for `INSERT` queries.
+</ParamField>
+
+## Description
+
+The `remote` function family provides several ways to query remote ClickHouse servers:
+
+- **`remote`** - Query remote servers over TCP (port 9000 by default)
+- **`remoteSecure`** - Query remote servers over secure TCP connection
+- **`cluster`** - Query a predefined cluster using one replica per shard
+- **`clusterAllReplicas`** - Query a predefined cluster using all replicas
+
+### Address Patterns
+
+The `addresses_expr` supports powerful pattern expansion:
+
+- **Range expansion**: `host{1..10}` → `host1, host2, ..., host10`
+- **List expansion**: `host{a,b,c}` → `hosta, hostb, hostc`
+- **Shards and replicas**: Use `,` for shards, `|` for replicas
+
+### Secure Connections
+
+`remoteSecure` uses TLS/SSL for encrypted communication. The secure port (9440 by default) must be configured on remote servers.
+
+## Examples
+
+### Basic Remote Queries
+
+```sql
+-- Query a remote server
+SELECT * FROM remote('server1:9000', 'mydb', 'users')
+
+-- Using db.table syntax
+SELECT * FROM remote('server1:9000', 'mydb.users')
+
+-- With authentication
+SELECT * 
+FROM remote('server1:9000', 'mydb', 'users', 'username', 'password')
+WHERE id > 100
+
+-- Query system tables
+SELECT * FROM remote('server1:9000', 'system', 'metrics')
+
+-- Shorthand for system.one (default)
+SELECT count() FROM remote('server1:9000')
+```
+
+### Multiple Servers and Shards
+
+```sql
+-- Query multiple shards (data is combined)
+SELECT count() 
+FROM remote('server1:9000,server2:9000,server3:9000', 'mydb', 'events')
+
+-- Shards with replicas (| separates replicas, , separates shards)
+SELECT * FROM remote(
+    'server1:9000|server1-replica:9000,server2:9000|server2-replica:9000',
+    'mydb',
+    'users'
+)
+```
+
+### Using Pattern Expansion
+
+```sql
+-- Range expansion
+SELECT hostname(), count() 
+FROM remote('server{1..5}:9000', 'mydb', 'logs')
+GROUP BY hostname()
+
+-- List expansion  
+SELECT * FROM remote('server{a,b,c}:9000', 'mydb', 'table')
+
+-- Complex pattern
+SELECT * FROM remote(
+    'shard{1..3}-replica{1,2}.example.com:9000',
+    'mydb',
+    'events'
+)
+```
+
+### Secure Connections
+
+```sql
+-- Query using secure connection
+SELECT * FROM remoteSecure(
+    'server1:9440',
+    'mydb',
+    'sensitive_data',
+    'username',
+    'password'
+)
+
+-- Multiple secure servers
+SELECT count() FROM remoteSecure(
+    'server{1..3}:9440',
+    'mydb',
+    'table'
+)
+```
+
+### Cluster Functions
+
+```sql
+-- Query predefined cluster
+SELECT * FROM cluster('my_cluster', 'mydb', 'users')
+
+-- Use default cluster if configured
+SELECT * FROM cluster('default', 'mydb.table')
+
+-- Query all replicas (not just one per shard)
+SELECT * FROM clusterAllReplicas('my_cluster', 'mydb', 'users')
+
+-- With sharding key for INSERT
+INSERT INTO FUNCTION cluster('my_cluster', 'mydb', 'events', rand())
+SELECT * FROM source_table
+```
+
+### Inserting Data
+
+```sql
+-- Insert into remote table
+INSERT INTO FUNCTION remote(
+    'server1:9000',
+    'mydb',
+    'users',
+    'username',
+    'password'
+)
+SELECT * FROM local_users
+
+-- Insert with sharding key
+INSERT INTO FUNCTION remote(
+    'server{1..3}:9000',
+    'mydb',
+    'events',
+    'default',
+    '',
+    rand()  -- Sharding key: distribute randomly
+)
+SELECT * FROM source_events
+
+-- Shard by user_id
+INSERT INTO FUNCTION cluster(
+    'my_cluster',
+    'mydb',
+    'user_events',
+    user_id  -- Sharding key
+)
+SELECT * FROM events
+```
+
+### Using with Table Functions
+
+```sql
+-- Query remote table function
+SELECT * FROM remote(
+    'server1:9000',
+    numbers(1000)
+)
+
+-- Remote file() function
+SELECT * FROM remote(
+    'server1:9000',
+    file('/data/file.csv', 'CSV', 'id UInt32, name String')
+)
+
+-- Remote url() function
+SELECT count() FROM cluster(
+    'my_cluster',
+    url('https://example.com/data.json', 'JSONEachRow')
+)
+```
+
+### Named Collections
+
+```sql
+-- Define named collection in server config:
+-- <named_collections>
+--   <production_db>
+--     <host>prod-server1</host>
+--     <port>9000</port>
+--     <user>readonly_user</user>
+--     <password>secret</password>
+--     <database>analytics</database>
+--     <table>events</table>
+--   </production_db>
+-- </named_collections>
+
+-- Use named collection
+SELECT * FROM remote(production_db)
+
+-- Override specific parameters
+SELECT * FROM remote(production_db, table = 'users')
+```
+
+### Joining Local and Remote Data
+
+```sql
+-- Join local table with remote table
+SELECT 
+    l.id,
+    l.name,
+    r.details
+FROM local_table l
+JOIN remote('server1:9000', 'mydb', 'remote_table') r
+    ON l.id = r.id
+
+-- Aggregate across multiple servers
+SELECT 
+    date,
+    sum(views) as total_views
+FROM remote('server{1..5}:9000', 'stats', 'page_views')
+GROUP BY date
+ORDER BY date
+```
+
+### Monitoring and Diagnostics
+
+```sql
+-- Check cluster health
+SELECT 
+    hostname(),
+    version(),
+    uptime()
+FROM cluster('my_cluster', 'system', 'one')
+
+-- Query metrics across cluster
+SELECT 
+    hostname() as host,
+    metric,
+    value
+FROM clusterAllReplicas('my_cluster', 'system', 'metrics')
+WHERE metric LIKE '%Query%'
+ORDER BY host, metric
+
+-- Check table sizes across shards
+SELECT 
+    hostname() as shard,
+    database,
+    table,
+    formatReadableSize(sum(bytes)) as size
+FROM cluster('my_cluster', 'system', 'parts')
+WHERE database = 'mydb'
+GROUP BY hostname(), database, table
+```
+
+## Address Resolution
+
+ClickHouse resolves the `addresses_expr` pattern:
+
+```sql
+-- This pattern:
+remote('host{1..3}:9000,host{a,b}:9001', 'db', 'table')
+
+-- Expands to these shards:
+-- Shard 1: host1:9000
+-- Shard 2: host2:9000  
+-- Shard 3: host3:9000
+-- Shard 4: hosta:9001
+-- Shard 5: hostb:9001
+```
+
+Replicas within a shard:
+
+```sql
+-- This pattern:
+remote('host1:9000|host2:9000', 'db', 'table')
+
+-- Creates:
+-- Shard 1:
+--   Replica 1: host1:9000
+--   Replica 2: host2:9000
+```
+
+## Settings
+
+### Remote Query Settings
+
+```sql
+-- Maximum number of addresses from pattern expansion
+SET table_function_remote_max_addresses = 1000
+
+-- Connection timeouts
+SET connect_timeout = 10
+SET receive_timeout = 300  
+SET send_timeout = 300
+
+-- Retry settings
+SET distributed_replica_error_cap = 1000
+SET distributed_replica_error_half_life = 60
+
+-- Parallel replicas (if supported)
+SET max_parallel_replicas = 3
+```
+
+### Distributed Query Settings
+
+```sql
+-- Enable distributed aggregation
+SET distributed_aggregation_memory_efficient = 1
+
+-- Push down LIMIT to remote servers
+SET distributed_push_down_limit = 1
+
+-- Group by optimization
+SET distributed_group_by_no_merge = 0
+```
+
+## Cluster Configuration
+
+Clusters are defined in `config.xml` or `cluster.xml`:
+
+```xml
+<clickhouse>
+    <remote_servers>
+        <my_cluster>
+            <shard>
+                <replica>
+                    <host>server1</host>
+                    <port>9000</port>
+                </replica>
+                <replica>
+                    <host>server2</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>server3</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </my_cluster>
+    </remote_servers>
+</clickhouse>
+```
+
+With secret for inter-server authentication:
+
+```xml
+<my_cluster>
+    <secret>shared_secret_key</secret>
+    <shard>...</shard>
+</my_cluster>
+```
+
+## Security and Access Control
+
+### Permissions
+
+```sql
+-- Grant REMOTE privilege
+GRANT REMOTE ON *.* TO username
+
+-- Revoke REMOTE privilege  
+REVOKE REMOTE ON *.* FROM username
+
+-- Grant access to specific cluster
+GRANT REMOTE ON my_cluster.*.* TO username
+```
+
+### Remote Host Filtering
+
+Server configuration can restrict accessible hosts:
+
+```xml
+<remote_host_filter>
+    <host_regexp>^server[0-9]+\.example\.com$</host_regexp>
+</remote_host_filter>
+```
+
+### Authentication
+
+- User credentials are sent to remote servers
+- Remote servers validate credentials independently  
+- Consider using `remoteSecure` for sensitive environments
+- Inter-server secrets can authenticate cluster queries
+
+## Performance Tips
+
+### Minimize Data Transfer
+
+```sql
+-- Filter and aggregate on remote servers
+SELECT 
+    date,
+    count() as cnt
+FROM remote('server{1..10}:9000', 'mydb', 'events')
+WHERE date >= today() - 7  -- Pushed to remote
+GROUP BY date              -- Aggregated remotely
+```
+
+### Use Appropriate Replica Selection
+
+```sql
+-- Query one replica per shard (default)
+SELECT * FROM cluster('my_cluster', 'mydb', 'table')
+
+-- Query all replicas (for small tables or special cases)
+SELECT * FROM clusterAllReplicas('my_cluster', 'mydb', 'small_table')
+```
+
+### Connection Pooling
+
+ClickHouse maintains connection pools to remote servers for better performance.
+
+## Comparison with Distributed Table
+
+| Feature | remote() | Distributed Table |
+|---------|----------|-------------------|
+| Setup | No setup needed | Requires CREATE TABLE |
+| Flexibility | Dynamic addresses | Fixed cluster |
+| Metadata | No metadata stored | Stored in system tables |
+| Performance | Same | Same |
+| Use case | Ad-hoc queries | Permanent setup |
+
+## cluster vs clusterAllReplicas
+
+| Aspect | cluster | clusterAllReplicas |
+|--------|---------|--------------------|
+| Replicas queried | One per shard | All replicas |
+| Result deduplication | Not needed | Automatic |
+| Use case | Normal queries | Testing, verification |
+| Performance | Faster | Slower (more data) |
+
+## Limitations
+
+- Maximum addresses controlled by `table_function_remote_max_addresses`
+- No support for `INSERT` with `clusterAllReplicas` (would duplicate data)
+- Schema must match across all remote tables
+- User/password arguments not supported with `cluster()` function
+- Some features may require compatible ClickHouse versions
+
+## Error Handling
+
+```sql
+-- Server not accessible
+SELECT * FROM remote('nonexistent:9000', 'db', 'table')
+-- Error: Connection refused or timeout
+
+-- Invalid credentials
+SELECT * FROM remote('server:9000', 'db', 'table', 'baduser', 'badpass')
+-- Error: Authentication failed
+
+-- Table doesn't exist
+SELECT * FROM remote('server:9000', 'db', 'nonexistent_table')
+-- Error: Table doesn't exist
+
+-- Empty shard list
+SELECT * FROM remote('', 'db', 'table')  
+-- Error: Shard list is empty
+```
+
+## See Also
+
+- [Distributed Table Engine](/engines/special)
+- [url](/functions/table/url) - Query HTTP endpoints
+- [file](/functions/table/file) - Read local files  
+- [Cluster Configuration](/operations/configuration)

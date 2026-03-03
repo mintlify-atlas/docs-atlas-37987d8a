@@ -1,0 +1,278 @@
+---
+title: Logical Functions
+description: Logical operators and boolean functions in ClickHouse
+---
+
+ClickHouse provides logical operators for combining boolean conditions. All logical operators work with `UInt8` values where 0 represents false and any non-zero value represents true.
+
+## Logical Operators
+
+| Operator | Function | Description | Example |
+|----------|----------|-------------|----------|
+| `AND` | `and` | Logical AND | `SELECT 1 AND 1` |
+| `OR` | `or` | Logical OR | `SELECT 1 OR 0` |
+| `NOT` | `not` | Logical NOT | `SELECT NOT 0` |
+| `XOR` | `xor` | Logical XOR | `SELECT 1 XOR 1` |
+
+## AND Operator
+
+Returns 1 if both operands are non-zero, otherwise returns 0.
+
+```sql
+SELECT 1 AND 1;
+-- Result: 1
+
+SELECT 1 AND 0;
+-- Result: 0
+
+SELECT 0 AND 0;
+-- Result: 0
+
+-- Function form
+SELECT and(1, 1, 1);
+-- Result: 1
+```
+
+### Multiple Conditions
+
+```sql
+-- Filtering with multiple conditions
+SELECT * FROM users
+WHERE age >= 18 AND status = 'active' AND city = 'New York';
+
+-- Using function form
+SELECT and(age >= 18, status = 'active') as is_valid
+FROM users;
+```
+
+## OR Operator
+
+Returns 1 if at least one operand is non-zero, otherwise returns 0.
+
+```sql
+SELECT 1 OR 0;
+-- Result: 1
+
+SELECT 0 OR 0;
+-- Result: 0
+
+SELECT 1 OR 1;
+-- Result: 1
+
+-- Function form
+SELECT or(0, 0, 1);
+-- Result: 1
+```
+
+### Example Usage
+
+```sql
+-- Multiple conditions
+SELECT * FROM products
+WHERE category = 'electronics' OR category = 'computers' OR price < 100;
+
+-- Better: use IN for multiple equality checks
+SELECT * FROM products
+WHERE category IN ('electronics', 'computers') OR price < 100;
+```
+
+## NOT Operator
+
+Negates a boolean value: returns 1 for 0, and 0 for any non-zero value.
+
+```sql
+SELECT NOT 0;
+-- Result: 1
+
+SELECT NOT 1;
+-- Result: 0
+
+SELECT NOT 42;
+-- Result: 0
+
+-- Function form
+SELECT not(1);
+-- Result: 0
+```
+
+### Negating Conditions
+
+```sql
+-- Exclude certain records
+SELECT * FROM users
+WHERE NOT (status = 'deleted');
+
+-- Equivalent to
+SELECT * FROM users
+WHERE status != 'deleted';
+```
+
+## XOR Operator
+
+Returns 1 if exactly one operand is non-zero (exclusive or).
+
+```sql
+SELECT 1 XOR 0;
+-- Result: 1
+
+SELECT 1 XOR 1;
+-- Result: 0
+
+SELECT 0 XOR 0;
+-- Result: 0
+
+-- Function form
+SELECT xor(1, 0);
+-- Result: 1
+```
+
+### XOR Use Cases
+
+```sql
+-- Toggle behavior: exactly one condition must be true
+SELECT * FROM orders
+WHERE (is_paid = 1) XOR (is_refunded = 1);
+-- Returns orders that are either paid OR refunded, but not both
+```
+
+## Operator Precedence
+
+Logical operators follow this precedence (highest to lowest):
+
+1. `NOT`
+2. `AND`
+3. `OR`
+4. `XOR`
+
+```sql
+-- Evaluated as: 1 AND (0 OR 1)
+SELECT 1 AND 0 OR 1;
+-- Result: 1
+
+-- Use parentheses for clarity
+SELECT (1 AND 0) OR 1;
+-- Result: 1
+
+SELECT 1 AND (0 OR 1);
+-- Result: 1
+```
+
+## NULL Handling
+
+Logical operators follow three-valued logic with NULL:
+
+```sql
+-- NULL AND
+SELECT NULL AND 1;
+-- Result: NULL
+
+SELECT NULL AND 0;
+-- Result: 0
+
+-- NULL OR
+SELECT NULL OR 1;
+-- Result: 1
+
+SELECT NULL OR 0;
+-- Result: NULL
+
+-- NULL NOT
+SELECT NOT NULL;
+-- Result: NULL
+```
+
+### Truth Tables with NULL
+
+**AND Truth Table:**
+
+| A | B | A AND B |
+|---|---|----------|
+| 0 | 0 | 0 |
+| 0 | 1 | 0 |
+| 0 | NULL | 0 |
+| 1 | 0 | 0 |
+| 1 | 1 | 1 |
+| 1 | NULL | NULL |
+| NULL | 0 | 0 |
+| NULL | 1 | NULL |
+| NULL | NULL | NULL |
+
+**OR Truth Table:**
+
+| A | B | A OR B |
+|---|---|----------|
+| 0 | 0 | 0 |
+| 0 | 1 | 1 |
+| 0 | NULL | NULL |
+| 1 | 0 | 1 |
+| 1 | 1 | 1 |
+| 1 | NULL | 1 |
+| NULL | 0 | NULL |
+| NULL | 1 | 1 |
+| NULL | NULL | NULL |
+
+## Short-Circuit Evaluation
+
+ClickHouse uses short-circuit evaluation for logical operators:
+
+```sql
+-- Second condition not evaluated if first is false
+SELECT 0 AND (1/0);
+-- Result: 0 (no division by zero error)
+
+-- Second condition not evaluated if first is true
+SELECT 1 OR (1/0);
+-- Result: 1 (no division by zero error)
+```
+
+## Combining with Comparison
+
+```sql
+-- Complex filtering
+SELECT * FROM events
+WHERE (event_type = 'click' AND user_id > 1000)
+   OR (event_type = 'purchase' AND amount > 100);
+
+-- Using NOT with IN
+SELECT * FROM users
+WHERE NOT (status IN ('deleted', 'banned', 'suspended'));
+```
+
+## Performance Considerations
+
+### Order of Conditions
+
+Place more selective conditions first:
+
+```sql
+-- Better: check specific ID first
+SELECT * FROM logs
+WHERE user_id = 12345 AND date >= '2023-01-01';
+
+-- Less efficient: date range first
+SELECT * FROM logs
+WHERE date >= '2023-01-01' AND user_id = 12345;
+```
+
+### Avoid Complex Nested Logic
+
+```sql
+-- Complex and hard to optimize
+SELECT * FROM table
+WHERE (a AND b) OR (c AND d) OR (e AND (f OR g));
+
+-- Consider restructuring or using CASE/IF
+SELECT * FROM table
+WHERE multiIf(
+    a AND b, 1,
+    c AND d, 1,
+    e AND (f OR g), 1,
+    0
+) = 1;
+```
+
+## See Also
+
+- [Comparison Functions](/functions/comparison)
+- [Conditional Functions](https://clickhouse.com/docs/en/sql-reference/functions/conditional-functions)
+- [Functions for Working with Nullable Values](https://clickhouse.com/docs/en/sql-reference/functions/functions-for-nulls)

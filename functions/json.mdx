@@ -1,0 +1,421 @@
+---
+title: JSON Functions
+description: Functions for parsing, querying, and manipulating JSON data in ClickHouse
+---
+
+ClickHouse provides powerful functions for working with JSON data, enabling parsing, extraction, and manipulation of JSON structures stored as strings or in specialized JSON types.
+
+## JSON Extraction Functions
+
+### JSONExtract
+
+Extracts a value from JSON with type conversion.
+
+```sql
+SELECT JSONExtract('{"name":"Alice","age":30}', 'name', 'String');
+-- Result: 'Alice'
+
+SELECT JSONExtract('{"name":"Alice","age":30}', 'age', 'UInt8');
+-- Result: 30
+
+SELECT JSONExtract('{"user":{"id":123}}', 'user', 'id', 'UInt32');
+-- Result: 123
+```
+
+### JSONExtractString
+
+Extracts a string value from JSON.
+
+```sql
+SELECT JSONExtractString('{"name":"Bob","city":"NYC"}', 'name');
+-- Result: 'Bob'
+
+SELECT JSONExtractString('{"name":"Bob","city":"NYC"}', 'city');
+-- Result: 'NYC'
+```
+
+### JSONExtractInt / JSONExtractUInt / JSONExtractFloat
+
+Extracts numeric values from JSON.
+
+```sql
+SELECT JSONExtractInt('{"count":42}', 'count');
+-- Result: 42
+
+SELECT JSONExtractUInt('{"id":12345}', 'id');
+-- Result: 12345
+
+SELECT JSONExtractFloat('{"price":19.99}', 'price');
+-- Result: 19.99
+```
+
+### JSONExtractBool
+
+Extracts a boolean value.
+
+```sql
+SELECT JSONExtractBool('{"active":true}', 'active');
+-- Result: 1
+
+SELECT JSONExtractBool('{"active":false}', 'active');
+-- Result: 0
+```
+
+### JSONExtractArrayRaw
+
+Extracts an array as array of strings (raw JSON).
+
+```sql
+SELECT JSONExtractArrayRaw('{"items":[1,2,3]}', 'items');
+-- Result: ['1','2','3']
+
+SELECT JSONExtractArrayRaw('{"users":[{"id":1},{"id":2}]}', 'users');
+-- Result: ['{"id":1}','{"id":2}']
+```
+
+### JSONExtractKeysAndValues
+
+Extracts all key-value pairs from a JSON object.
+
+```sql
+SELECT JSONExtractKeysAndValues('{"a":1,"b":2,"c":3}', 'Int32');
+-- Result: [('a',1),('b',2),('c',3)]
+```
+
+### JSONExtractKeys
+
+Extracts all keys from a JSON object.
+
+```sql
+SELECT JSONExtractKeys('{"name":"Alice","age":30,"city":"NYC"}');
+-- Result: ['name','age','city']
+```
+
+## JSON Path Queries
+
+### JSONExtractRaw
+
+Extracts a value as raw JSON string.
+
+```sql
+SELECT JSONExtractRaw('{"user":{"name":"Alice","age":30}}', 'user');
+-- Result: '{"name":"Alice","age":30}'
+
+SELECT JSONExtractRaw('{"items":[1,2,3]}', 'items');
+-- Result: '[1,2,3]'
+```
+
+### JSONExtract with Nested Paths
+
+Extract nested values using path notation.
+
+```sql
+SELECT JSONExtract(
+    '{"user":{"profile":{"email":"alice@example.com"}}}',
+    'user', 'profile', 'email',
+    'String'
+);
+-- Result: 'alice@example.com'
+```
+
+## JSON Validation
+
+### isValidJSON
+
+Checks if a string is valid JSON.
+
+```sql
+SELECT isValidJSON('{"valid":true}');
+-- Result: 1
+
+SELECT isValidJSON('{invalid}');
+-- Result: 0
+
+SELECT isValidJSON('not json at all');
+-- Result: 0
+```
+
+### JSONHas
+
+Checks if a JSON key exists.
+
+```sql
+SELECT JSONHas('{"name":"Alice","age":30}', 'name');
+-- Result: 1
+
+SELECT JSONHas('{"name":"Alice","age":30}', 'email');
+-- Result: 0
+
+SELECT JSONHas('{"user":{"id":123}}', 'user', 'id');
+-- Result: 1
+```
+
+## JSON Array Functions
+
+### JSONLength
+
+Returns the length of a JSON array or number of keys in an object.
+
+```sql
+SELECT JSONLength('[1,2,3,4,5]');
+-- Result: 5
+
+SELECT JSONLength('{"a":1,"b":2,"c":3}');
+-- Result: 3
+
+SELECT JSONLength('{"items":[1,2,3]}', 'items');
+-- Result: 3
+```
+
+### JSONArrayLength
+
+Returns the length of a JSON array.
+
+```sql
+SELECT JSONArrayLength('[10,20,30]');
+-- Result: 3
+
+SELECT JSONArrayLength('[]');
+-- Result: 0
+```
+
+## JSON Type Detection
+
+### JSONType
+
+Returns the type of a JSON value.
+
+```sql
+SELECT JSONType('{"key":"value"}');
+-- Result: 'Object'
+
+SELECT JSONType('[1,2,3]');
+-- Result: 'Array'
+
+SELECT JSONType('"hello"');
+-- Result: 'String'
+
+SELECT JSONType('42');
+-- Result: 'Int64'
+
+SELECT JSONType('true');
+-- Result: 'Bool'
+
+SELECT JSONType('null');
+-- Result: 'Null'
+```
+
+## SQL/JSON Path Functions
+
+### JSON_VALUE
+
+Extract scalar value using SQL/JSON path.
+
+```sql
+SELECT JSON_VALUE('{"user":{"name":"Alice"}}', '$.user.name');
+-- Result: 'Alice'
+
+SELECT JSON_VALUE('[1,2,3,4,5]', '$[2]');
+-- Result: '3'
+```
+
+### JSON_QUERY
+
+Extract JSON object or array using SQL/JSON path.
+
+```sql
+SELECT JSON_QUERY('{"user":{"name":"Alice","age":30}}', '$.user');
+-- Result: '{"name":"Alice","age":30}'
+
+SELECT JSON_QUERY('[1,2,3,4,5]', '$[1:3]');
+-- Result: '[2,3]'
+```
+
+### JSON_EXISTS
+
+Checks if a path exists in JSON.
+
+```sql
+SELECT JSON_EXISTS('{"user":{"name":"Alice"}}', '$.user.name');
+-- Result: 1
+
+SELECT JSON_EXISTS('{"user":{"name":"Alice"}}', '$.user.email');
+-- Result: 0
+```
+
+## JSON Object Manipulation
+
+### toJSONString
+
+Converts a value to JSON string representation.
+
+```sql
+SELECT toJSONString('Hello');
+-- Result: '"Hello"'
+
+SELECT toJSONString(42);
+-- Result: '42'
+
+SELECT toJSONString([1, 2, 3]);
+-- Result: '[1,2,3]'
+
+SELECT toJSONString(map('key', 'value'));
+-- Result: '{"key":"value"}'
+```
+
+### JSONExtractKeysAndValuesRaw
+
+Extracts key-value pairs as raw JSON strings.
+
+```sql
+SELECT JSONExtractKeysAndValuesRaw('{"a":{"x":1},"b":{"y":2}}');
+-- Result: [('a','{"x":1}'),('b','{"y":2}')]
+```
+
+## Working with JSON Arrays
+
+### Extracting Array Elements
+
+```sql
+-- Extract all elements from array
+SELECT JSONExtract('[{"id":1},{"id":2},{"id":3}]', 'Array(JSON)');
+
+-- Extract specific field from each array element
+SELECT 
+    arrayMap(
+        x -> JSONExtractInt(x, 'id'),
+        JSONExtractArrayRaw('[{"id":1},{"id":2},{"id":3}]')
+    );
+-- Result: [1,2,3]
+```
+
+## Complex JSON Queries
+
+```sql
+-- Extract nested array elements
+SELECT JSONExtract(
+    '{"users":[{"name":"Alice","age":30},{"name":"Bob","age":25}]}',
+    'users',
+    'Array(Tuple(name String, age UInt8))'
+);
+-- Result: [('Alice',30),('Bob',25)]
+
+-- Extract map from JSON
+SELECT JSONExtract(
+    '{"settings":{"timeout":30,"retries":3}}',
+    'settings',
+    'Map(String, UInt32)'
+);
+-- Result: {'timeout':30,'retries':3}
+```
+
+## Performance Considerations
+
+1. **JSON parsing is CPU-intensive** - cache extracted values when possible
+2. **Use simpler extract functions** when you know the type (e.g., `JSONExtractString` vs `JSONExtract`)
+3. **Consider materializing frequently accessed JSON fields** as table columns
+4. **Use JSON data type** for better performance with native JSON storage
+5. **Index extracted values** rather than JSON strings
+
+## Working with JSON Type
+
+```sql
+-- Create table with JSON column
+CREATE TABLE events
+(
+    id UInt64,
+    data JSON
+)
+ENGINE = MergeTree
+ORDER BY id;
+
+-- Insert JSON data
+INSERT INTO events VALUES 
+    (1, '{"user":"alice","action":"click"}'),
+    (2, '{"user":"bob","action":"view"}');
+
+-- Query JSON fields directly
+SELECT 
+    id,
+    data.user,
+    data.action
+FROM events;
+```
+
+## Common Patterns
+
+```sql
+-- Parse log entries
+SELECT 
+    JSONExtractString(log_data, 'timestamp') as ts,
+    JSONExtractString(log_data, 'level') as level,
+    JSONExtractString(log_data, 'message') as message
+FROM logs
+WHERE JSONExtractString(log_data, 'level') = 'ERROR';
+
+-- Flatten nested JSON
+SELECT 
+    user_id,
+    arrayJoin(
+        arrayMap(
+            x -> JSONExtract(x, 'Tuple(product String, price Float64)'),
+            JSONExtractArrayRaw(order_data, 'items')
+        )
+    ) as item
+FROM orders;
+
+-- Conditional extraction with default
+SELECT 
+    coalesce(
+        JSONExtractString(data, 'email'),
+        'no-email@example.com'
+    ) as email
+FROM users;
+```
+
+## Error Handling
+
+```sql
+-- Returns NULL on invalid JSON or missing key
+SELECT JSONExtractString('invalid json', 'key');
+-- Result: ''
+
+-- Validate before extracting
+SELECT 
+    if(
+        isValidJSON(data) AND JSONHas(data, 'email'),
+        JSONExtractString(data, 'email'),
+        'invalid'
+    ) as email
+FROM raw_data;
+
+-- Use try* variants for safety
+SELECT 
+    tryBase64Decode(
+        JSONExtractString(data, 'encoded_field')
+    ) as decoded
+FROM messages;
+```
+
+## Comparison with visitParam Functions
+
+ClickHouse also provides `visitParam*` functions for extracting values from simple JSON-like structures. These are faster but less flexible:
+
+```sql
+-- visitParam functions (faster, simpler)
+SELECT visitParamExtractString('{"key":"value"}', 'key');
+-- Result: 'value'
+
+-- JSONExtract functions (slower, more powerful)
+SELECT JSONExtractString('{"key":"value"}', 'key');
+-- Result: 'value'
+```
+
+Use `visitParam*` for simple JSON parsing, and `JSONExtract*` for complex nested structures.
+
+## See Also
+
+- [JSON Data Type](https://clickhouse.com/docs/en/sql-reference/data-types/json)
+- [String Functions](/functions/string)
+- [Array Functions](/functions/array)
+- [Type Conversion Functions](/functions/type-conversion)

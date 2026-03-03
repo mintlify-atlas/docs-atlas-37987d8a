@@ -1,0 +1,422 @@
+---
+title: Backup and Restore
+description: Procedures for backing up and restoring ClickHouse data
+---
+
+ClickHouse provides multiple methods for backing up and restoring data, from simple table exports to full incremental backups with the `BACKUP` and `RESTORE` commands.
+
+## Backup Methods Overview
+
+| Method | Use Case | Consistency | Incremental | Online |
+|--------|----------|-------------|-------------|--------|
+| `BACKUP` command | Production backups | Yes | Yes | Yes |
+| Table export | Small datasets | No | No | Yes |
+| File copy | Cold backups | Yes | No | No |
+| Replication | High availability | Yes | Continuous | Yes |
+
+## BACKUP Command
+
+The `BACKUP` command creates consistent backups while the server is running.
+
+### Basic Backup
+
+```sql
+-- Backup entire database
+BACKUP DATABASE my_database TO Disk('backups', 'my_database_backup');
+
+-- Backup specific tables
+BACKUP TABLE my_database.table1, my_database.table2 
+TO Disk('backups', 'tables_backup');
+
+-- Backup all databases
+BACKUP ALL TO Disk('backups', 'full_backup');
+
+-- Backup to S3
+BACKUP DATABASE my_database 
+TO S3('https://bucket.s3.amazonaws.com/backups/my_backup', 'access_key', 'secret_key');
+
+-- Backup to local file system
+BACKUP DATABASE my_database TO File('/mnt/backups/my_database');
+```
+
+### Incremental Backups
+
+```sql
+-- Create base backup
+BACKUP DATABASE my_database TO Disk('backups', 'base_backup');
+
+-- Create incremental backup
+BACKUP DATABASE my_database 
+TO Disk('backups', 'incremental_backup_1')
+SETTINGS base_backup = Disk('backups', 'base_backup');
+
+-- Second incremental backup
+BACKUP DATABASE my_database 
+TO Disk('backups', 'incremental_backup_2')
+SETTINGS base_backup = Disk('backups', 'incremental_backup_1');
+```
+
+### Backup Options
+
+```sql
+-- Backup with compression
+BACKUP DATABASE my_database 
+TO Disk('backups', 'compressed_backup')
+SETTINGS compression_method = 'lz4', compression_level = 3;
+
+-- Backup with password protection
+BACKUP DATABASE my_database 
+TO Disk('backups', 'encrypted_backup')
+SETTINGS password = 'strong_password';
+
+-- Async backup (returns immediately)
+BACKUP DATABASE my_database 
+TO Disk('backups', 'async_backup')
+SETTINGS async = true;
+
+-- Backup with custom ID
+BACKUP DATABASE my_database 
+TO Disk('backups', 'tracked_backup')
+SETTINGS id = 'my_backup_20250303';
+```
+
+<Warning>
+Backups with password protection use encryption. Store passwords securely and never lose them - encrypted backups cannot be restored without the password.
+</Warning>
+
+## Configuring Backup Destinations
+
+### Local Disk Configuration
+
+Configure backup disks in `config.xml`:
+
+```xml
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <backups>
+                <type>local</type>
+                <path>/mnt/backups/</path>
+            </backups>
+        </disks>
+    </storage_configuration>
+    
+    <backups>
+        <allowed_disk>backups</allowed_disk>
+    </backups>
+</clickhouse>
+```
+
+### S3 Configuration
+
+```xml
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <s3_backups>
+                <type>s3</type>
+                <endpoint>https://bucket.s3.amazonaws.com/backups/</endpoint>
+                <access_key_id>YOUR_ACCESS_KEY</access_key_id>
+                <secret_access_key>YOUR_SECRET_KEY</secret_access_key>
+            </s3_backups>
+        </disks>
+    </storage_configuration>
+    
+    <backups>
+        <allowed_disk>s3_backups</allowed_disk>
+    </backups>
+</clickhouse>
+```
+
+## RESTORE Command
+
+### Basic Restore
+
+```sql
+-- Restore entire database
+RESTORE DATABASE my_database FROM Disk('backups', 'my_database_backup');
+
+-- Restore specific tables
+RESTORE TABLE my_database.table1, my_database.table2 
+FROM Disk('backups', 'tables_backup');
+
+-- Restore all databases
+RESTORE ALL FROM Disk('backups', 'full_backup');
+
+-- Restore from S3
+RESTORE DATABASE my_database 
+FROM S3('https://bucket.s3.amazonaws.com/backups/my_backup', 'access_key', 'secret_key');
+```
+
+### Restore to Different Location
+
+```sql
+-- Restore database with new name
+RESTORE DATABASE my_database AS restored_database 
+FROM Disk('backups', 'my_database_backup');
+
+-- Restore table with new name
+RESTORE TABLE my_database.table1 AS my_database.restored_table1 
+FROM Disk('backups', 'tables_backup');
+
+-- Restore to different database
+RESTORE TABLE my_database.table1 AS other_database.table1 
+FROM Disk('backups', 'tables_backup');
+```
+
+### Restore Options
+
+```sql
+-- Restore with password
+RESTORE DATABASE my_database 
+FROM Disk('backups', 'encrypted_backup')
+SETTINGS password = 'strong_password';
+
+-- Restore schema only (no data)
+RESTORE DATABASE my_database 
+FROM Disk('backups', 'my_database_backup')
+SETTINGS structure_only = true;
+
+-- Restore and replace existing tables
+RESTORE DATABASE my_database 
+FROM Disk('backups', 'my_database_backup')
+SETTINGS allow_non_empty_tables = true;
+
+-- Async restore
+RESTORE DATABASE my_database 
+FROM Disk('backups', 'my_database_backup')
+SETTINGS async = true;
+```
+
+## Monitoring Backups
+
+### System Table: system.backups
+
+```sql
+-- View all backup operations
+SELECT 
+    id,
+    name,
+    status,
+    error,
+    start_time,
+    end_time,
+    num_files,
+    total_size,
+    compressed_size
+FROM system.backups
+ORDER BY start_time DESC;
+
+-- View running backups
+SELECT * FROM system.backups WHERE status IN ('CREATING_BACKUP', 'RESTORING');
+
+-- View failed backups
+SELECT * FROM system.backups WHERE status = 'FAILED';
+```
+
+### Backup Status Values
+
+- `CREATING_BACKUP` - Backup in progress
+- `BACKUP_CREATED` - Backup completed successfully
+- `BACKUP_FAILED` - Backup failed
+- `RESTORING` - Restore in progress
+- `RESTORED` - Restore completed successfully
+- `RESTORE_FAILED` - Restore failed
+
+## Traditional Backup Methods
+
+### Export to File
+
+```sql
+-- Export to CSV
+SELECT * FROM my_database.table1 
+INTO OUTFILE '/tmp/table1.csv'
+FORMAT CSV;
+
+-- Export to Parquet
+SELECT * FROM my_database.table1 
+INTO OUTFILE '/tmp/table1.parquet'
+FORMAT Parquet;
+
+-- Export compressed
+SELECT * FROM my_database.table1 
+INTO OUTFILE '/tmp/table1.csv.gz'
+COMPRESSION 'gzip'
+FORMAT CSV;
+```
+
+### Import from File
+
+```sql
+-- Import from CSV
+INSERT INTO my_database.table1 
+FROM INFILE '/tmp/table1.csv'
+FORMAT CSV;
+
+-- Import from Parquet
+INSERT INTO my_database.table1 
+FROM INFILE '/tmp/table1.parquet'
+FORMAT Parquet;
+```
+
+### Filesystem Backup (Cold)
+
+<Warning>
+Filesystem backups require stopping the ClickHouse server. Only use for cold backups or read-only replicas.
+</Warning>
+
+<Steps>
+
+1. **Stop ClickHouse server**
+   ```bash
+   sudo systemctl stop clickhouse-server
+   ```
+
+2. **Copy data directory**
+   ```bash
+   sudo rsync -av /var/lib/clickhouse/ /mnt/backups/clickhouse_backup/
+   ```
+
+3. **Start ClickHouse server**
+   ```bash
+   sudo systemctl start clickhouse-server
+   ```
+
+</Steps>
+
+## Backup with clickhouse-backup Tool
+
+`clickhouse-backup` is a popular third-party tool for ClickHouse backups:
+
+```bash
+# Install clickhouse-backup
+wget https://github.com/AlexAkulov/clickhouse-backup/releases/latest/download/clickhouse-backup.tar.gz
+tar -xf clickhouse-backup.tar.gz
+sudo mv clickhouse-backup /usr/local/bin/
+
+# Create backup
+clickhouse-backup create my_backup
+
+# List backups
+clickhouse-backup list
+
+# Upload to S3
+clickhouse-backup upload my_backup
+
+# Download from S3
+clickhouse-backup download my_backup
+
+# Restore backup
+clickhouse-backup restore my_backup
+```
+
+## Backup Strategies
+
+### Full Backup Strategy
+
+```sql
+-- Daily full backup
+BACKUP ALL 
+TO Disk('backups', 'full_backup_{date}')
+SETTINGS async = true, compression_method = 'zstd';
+```
+
+### Incremental Backup Strategy
+
+```sql
+-- Weekly full backup (Sunday)
+BACKUP ALL TO Disk('backups', 'full_backup_week_{week_num}');
+
+-- Daily incremental backups (Monday-Saturday)
+BACKUP ALL 
+TO Disk('backups', 'incremental_backup_{date}')
+SETTINGS base_backup = Disk('backups', 'full_backup_week_{week_num}');
+```
+
+### Point-in-Time Recovery
+
+For point-in-time recovery, combine backups with replicated tables:
+
+1. Take regular full backups
+2. Use ReplicatedMergeTree for automatic replication
+3. Keep ZooKeeper logs for replay
+
+## Automated Backup Script
+
+```bash
+#!/bin/bash
+# backup.sh - Automated ClickHouse backup script
+
+BACKUP_NAME="backup_$(date +%Y%m%d_%H%M%S)"
+BACKUP_DISK="backups"
+
+# Execute backup
+clickhouse-client --query="
+BACKUP ALL 
+TO Disk('${BACKUP_DISK}', '${BACKUP_NAME}')
+SETTINGS async = false, compression_method = 'zstd', compression_level = 3;
+"
+
+if [ $? -eq 0 ]; then
+    echo "Backup completed: ${BACKUP_NAME}"
+    
+    # Optional: Delete old backups (keep last 7 days)
+    find /mnt/backups/ -type d -mtime +7 -exec rm -rf {} \;
+else
+    echo "Backup failed!"
+    exit 1
+fi
+```
+
+## Verifying Backups
+
+```sql
+-- Check backup contents
+SELECT * FROM system.backups WHERE name = 'my_database_backup';
+
+-- Test restore to temporary database
+RESTORE DATABASE my_database AS test_restore_db
+FROM Disk('backups', 'my_database_backup');
+
+-- Verify data
+SELECT count() FROM test_restore_db.table1;
+
+-- Cleanup
+DROP DATABASE test_restore_db;
+```
+
+## Best Practices
+
+<Steps>
+
+1. **Regular backup schedule**
+   - Implement automated daily backups
+   - Use incremental backups to save space
+   - Keep multiple backup versions
+
+2. **Test restores regularly**
+   - Verify backups can be restored
+   - Test restore procedures quarterly
+   - Document restore processes
+
+3. **Secure backup storage**
+   - Store backups off-site (S3, Azure, etc.)
+   - Use encryption for sensitive data
+   - Implement access controls
+
+4. **Monitor backup operations**
+   - Check `system.backups` for failures
+   - Set up alerts for failed backups
+   - Track backup sizes and durations
+
+5. **Retention policies**
+   - Define clear retention policies
+   - Automate old backup cleanup
+   - Keep long-term archives separately
+
+6. **Document procedures**
+   - Document backup configuration
+   - Maintain restore runbooks
+   - Train team on recovery procedures
+
+</Steps>

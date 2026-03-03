@@ -1,0 +1,486 @@
+---
+title: Client Libraries and Interfaces
+description: HTTP and TCP client interfaces for connecting to ClickHouse
+---
+
+ClickHouse provides multiple client interfaces for different use cases, with HTTP and native TCP protocols being the primary options.
+
+## Connection Protocols
+
+### HTTP Interface
+
+The HTTP interface provides a simple, stateless way to interact with ClickHouse using standard HTTP requests.
+
+#### Basic Connection
+
+```bash
+curl 'http://localhost:8123/' --data-binary "SELECT version()"
+```
+
+#### Authentication
+
+<CodeGroup>
+```bash Basic Auth
+curl 'http://localhost:8123/' \
+  --user 'username:password' \
+  --data-binary "SELECT database, table, count() FROM system.tables GROUP BY database, table"
+```
+
+```bash Query Parameters
+curl 'http://localhost:8123/?user=default&password=secret' \
+  --data-binary "SELECT currentUser()"
+```
+
+```bash Headers
+curl 'http://localhost:8123/' \
+  -H 'X-ClickHouse-User: admin' \
+  -H 'X-ClickHouse-Key: secret_key' \
+  --data-binary "SELECT * FROM system.users"
+```
+</CodeGroup>
+
+#### Query Parameters
+
+```bash
+curl 'http://localhost:8123/?query=SELECT+*+FROM+system.tables&database=system&max_rows_to_read=1000'
+```
+
+Common parameters:
+- `database` - Default database for the session
+- `query` - SQL query to execute
+- `default_format` - Default output format
+- `max_execution_time` - Query timeout in seconds
+- `max_memory_usage` - Memory limit in bytes
+- `readonly` - Read-only mode (0, 1, or 2)
+
+#### Inserting Data
+
+<CodeGroup>
+```bash JSON Insert
+curl 'http://localhost:8123/' \
+  --data-binary @- <<EOF
+INSERT INTO events FORMAT JSONEachRow
+{"event_id": 1, "user_id": "user123", "timestamp": "2026-03-01 10:00:00"}
+{"event_id": 2, "user_id": "user456", "timestamp": "2026-03-01 10:05:00"}
+EOF
+```
+
+```bash CSV Insert
+curl 'http://localhost:8123/?query=INSERT+INTO+users+FORMAT+CSV' \
+  --data-binary @users.csv
+```
+
+```bash Streaming Insert
+cat large_file.csv | curl 'http://localhost:8123/?query=INSERT+INTO+data+FORMAT+CSV' \
+  --data-binary @-
+```
+</CodeGroup>
+
+#### Response Formats
+
+```bash
+curl 'http://localhost:8123/?query=SELECT+*+FROM+system.numbers+LIMIT+5&default_format=JSON'
+```
+
+Supported formats: `JSON`, `JSONEachRow`, `CSV`, `TabSeparated`, `Parquet`, `Arrow`, `Native`, and many more.
+
+#### Session Management
+
+```bash
+# Create session
+curl 'http://localhost:8123/?session_id=my_session&session_timeout=60' \
+  --data-binary "CREATE TEMPORARY TABLE temp (id UInt32, value String)"
+
+# Use session
+curl 'http://localhost:8123/?session_id=my_session' \
+  --data-binary "INSERT INTO temp VALUES (1, 'test')"
+
+# Query in session
+curl 'http://localhost:8123/?session_id=my_session' \
+  --data-binary "SELECT * FROM temp"
+```
+
+#### Advanced Features
+
+<CodeGroup>
+```bash Compression
+# Request compression
+echo "SELECT * FROM large_table" | \
+  gzip | \
+  curl 'http://localhost:8123/' \
+    -H 'Content-Encoding: gzip' \
+    --data-binary @-
+
+# Response compression
+curl 'http://localhost:8123/?enable_http_compression=1' \
+  -H 'Accept-Encoding: gzip' \
+  --compressed \
+  --data-binary "SELECT * FROM large_table"
+```
+
+```bash External Data
+curl 'http://localhost:8123/' \
+  -F 'query=SELECT sum(value) FROM data' \
+  -F 'data_structure=value UInt32' \
+  -F 'data_format=CSV' \
+  -F 'data=@data.csv'
+```
+
+```bash Progress Tracking
+curl 'http://localhost:8123/?send_progress_in_http_headers=1' \
+  -v \
+  --data-binary "SELECT sleep(1) FROM numbers(10)" \
+  2>&1 | grep 'X-ClickHouse-Progress'
+```
+</CodeGroup>
+
+### Native TCP Interface
+
+The native TCP protocol provides better performance and supports more features than HTTP.
+
+#### ClickHouse Client
+
+```bash
+# Basic connection
+clickhouse-client --host localhost --port 9000
+
+# With authentication
+clickhouse-client --host localhost --user admin --password secret
+
+# Execute query
+clickhouse-client --query "SELECT count() FROM system.tables"
+
+# Multiline mode
+clickhouse-client --multiline
+```
+
+#### Connection Parameters
+
+```bash
+clickhouse-client \
+  --host production-cluster.example.com \
+  --port 9000 \
+  --user analyst \
+  --password 'secret' \
+  --database analytics \
+  --secure \
+  --compression true \
+  --query "SELECT * FROM events LIMIT 10"
+```
+
+Common options:
+- `--host` - Server hostname (default: localhost)
+- `--port` - TCP port (default: 9000, secure: 9440)
+- `--user` - Username (default: default)
+- `--password` - Password
+- `--database` - Default database
+- `--secure` - Use TLS/SSL encryption
+- `--compression` - Enable compression (default: true)
+- `--max_memory_usage` - Memory limit
+
+#### Interactive Features
+
+<CodeGroup>
+```sql Multiline Queries
+clickhouse-client --multiline
+
+SELECT 
+    database,
+    table,
+    sum(bytes) AS total_bytes
+FROM system.parts
+WHERE active
+GROUP BY database, table
+ORDER BY total_bytes DESC
+LIMIT 10;
+```
+
+```bash Output Formatting
+clickhouse-client \
+  --query "SELECT * FROM users LIMIT 5" \
+  --format Pretty
+
+clickhouse-client \
+  --query "SELECT * FROM users LIMIT 5" \
+  --format Vertical
+```
+
+```bash Batch Processing
+clickhouse-client \
+  --queries-file queries.sql \
+  --log-queries-cut-to-length 10000
+```
+</CodeGroup>
+
+## Client Libraries
+
+### Official Libraries
+
+#### Python
+
+```python
+import clickhouse_connect
+
+# Create client
+client = clickhouse_connect.get_client(
+    host='localhost',
+    port=8123,
+    username='default',
+    password=''
+)
+
+# Execute query
+result = client.query('SELECT version()')
+print(result.result_rows)
+
+# Insert data
+data = [
+    [1, 'Alice', 'alice@example.com'],
+    [2, 'Bob', 'bob@example.com']
+]
+client.insert('users', data, column_names=['id', 'name', 'email'])
+
+# Query with parameters
+result = client.query(
+    'SELECT * FROM users WHERE id = {id:UInt32}',
+    parameters={'id': 1}
+)
+```
+
+#### Go
+
+```go
+import (
+    "context"
+    "github.com/ClickHouse/clickhouse-go/v2"
+)
+
+func main() {
+    conn, err := clickhouse.Open(&clickhouse.Options{
+        Addr: []string{"localhost:9000"},
+        Auth: clickhouse.Auth{
+            Database: "default",
+            Username: "default",
+            Password: "",
+        },
+        Compression: &clickhouse.Compression{
+            Method: clickhouse.CompressionLZ4,
+        },
+    })
+    
+    if err != nil {
+        panic(err)
+    }
+    
+    // Execute query
+    rows, err := conn.Query(context.Background(), "SELECT * FROM system.tables")
+    if err != nil {
+        panic(err)
+    }
+    defer rows.Close()
+    
+    // Insert data
+    batch, err := conn.PrepareBatch(context.Background(), "INSERT INTO events")
+    batch.Append(1, "event1", time.Now())
+    batch.Append(2, "event2", time.Now())
+    batch.Send()
+}
+```
+
+#### Java
+
+```java
+import com.clickhouse.client.*;
+import com.clickhouse.data.ClickHouseFormat;
+
+public class ClickHouseExample {
+    public static void main(String[] args) {
+        ClickHouseClient client = ClickHouseClient.newInstance();
+        
+        // Query
+        try (ClickHouseResponse response = client.read(
+                ClickHouseNode.of("http://localhost:8123")
+            ).query("SELECT * FROM system.tables")
+            .format(ClickHouseFormat.RowBinaryWithNamesAndTypes)
+            .execute().get()) {
+            
+            response.records().forEach(record -> {
+                System.out.println(record);
+            });
+        }
+        
+        // Insert
+        client.write(ClickHouseNode.of("http://localhost:8123"))
+            .query("INSERT INTO events")
+            .data(data)
+            .execute();
+    }
+}
+```
+
+#### Node.js
+
+```javascript
+const { createClient } = require('@clickhouse/client');
+
+const client = createClient({
+  host: 'http://localhost:8123',
+  username: 'default',
+  password: '',
+  database: 'default'
+});
+
+// Query
+const rows = await client.query({
+  query: 'SELECT * FROM users WHERE age > {age:UInt8}',
+  format: 'JSONEachRow',
+  query_params: {
+    age: 18
+  }
+});
+
+const data = await rows.json();
+console.log(data);
+
+// Insert
+await client.insert({
+  table: 'events',
+  values: [
+    { event_id: 1, user_id: 'user123' },
+    { event_id: 2, user_id: 'user456' }
+  ],
+  format: 'JSONEachRow'
+});
+```
+
+### Connection Pooling
+
+#### Python Connection Pool
+
+```python
+from clickhouse_driver import Client
+from threading import Lock
+
+class ClickHousePool:
+    def __init__(self, host, port, max_connections=10):
+        self.connections = []
+        self.lock = Lock()
+        self.host = host
+        self.port = port
+        self.max_connections = max_connections
+    
+    def get_connection(self):
+        with self.lock:
+            if self.connections:
+                return self.connections.pop()
+            return Client(host=self.host, port=self.port)
+    
+    def return_connection(self, conn):
+        with self.lock:
+            if len(self.connections) < self.max_connections:
+                self.connections.append(conn)
+```
+
+## Best Practices
+
+### Performance Optimization
+
+1. **Use Native Protocol for High-Throughput**
+   ```python
+   # Native protocol is faster than HTTP
+   from clickhouse_driver import Client
+   client = Client('localhost', port=9000)
+   ```
+
+2. **Enable Compression**
+   ```bash
+   clickhouse-client --compression true
+   ```
+
+3. **Batch Inserts**
+   ```python
+   # Insert in batches of 10,000+ rows
+   batch_size = 100000
+   for i in range(0, len(data), batch_size):
+       batch = data[i:i+batch_size]
+       client.insert('table', batch)
+   ```
+
+4. **Connection Reuse**
+   ```python
+   # Reuse connections instead of creating new ones
+   client = clickhouse_connect.get_client(host='localhost')
+   for query in queries:
+       result = client.query(query)
+   ```
+
+### Security
+
+<CodeGroup>
+```bash TLS/SSL Connection
+clickhouse-client \
+  --host secure.clickhouse.example.com \
+  --port 9440 \
+  --secure \
+  --user admin \
+  --password secret
+```
+
+```python Client Certificate
+import clickhouse_connect
+
+client = clickhouse_connect.get_client(
+    host='localhost',
+    port=8443,
+    username='admin',
+    password='secret',
+    verify=True,
+    ca_cert='/path/to/ca.crt',
+    client_cert='/path/to/client.crt',
+    client_key='/path/to/client.key'
+)
+```
+</CodeGroup>
+
+### Error Handling
+
+```python
+from clickhouse_driver import Client
+from clickhouse_driver.errors import Error
+
+client = Client('localhost')
+
+try:
+    result = client.execute('SELECT * FROM non_existent_table')
+except Error as e:
+    print(f"ClickHouse error: {e}")
+    # Handle specific error codes
+    if e.code == 60:  # TABLE_NOT_FOUND
+        print("Table does not exist")
+```
+
+## Monitoring Connections
+
+```sql
+-- Active connections
+SELECT 
+    user,
+    client_hostname,
+    client_name,
+    query,
+    elapsed
+FROM system.processes;
+
+-- Connection statistics
+SELECT 
+    event,
+    value
+FROM system.events
+WHERE event LIKE '%Connection%';
+```
+
+## See Also
+
+- [Data Formats](/integration/data-formats) - Supported data formats
+- [Kafka Integration](/integration/kafka) - Kafka connectivity
+- [MySQL Integration](/integration/mysql) - MySQL protocol compatibility

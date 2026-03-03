@@ -1,0 +1,433 @@
+---
+title: clickhouse-local
+description: Local query processing tool without a ClickHouse server
+---
+
+`clickhouse-local` allows you to process local and remote files using ClickHouse SQL without deploying a full ClickHouse server. It's perfect for data analysis, ETL tasks, and format conversions.
+
+## Basic Usage
+
+<CodeGroup>
+```bash Query Local Files
+# Query CSV file
+clickhouse-local --query="SELECT * FROM file('data.csv', CSV)"
+
+# Query with automatic structure detection
+clickhouse-local --query="SELECT count() FROM file('logs.jsonl', JSONEachRow)"
+
+# Query multiple files with glob patterns
+clickhouse-local --query="SELECT * FROM file('logs/*.csv', CSV)"
+```
+
+```bash Stdin Processing
+# Process stdin with explicit structure
+cat data.csv | clickhouse-local --structure='id UInt32, name String' --input-format=CSV \
+  --query="SELECT name, count() FROM table GROUP BY name"
+
+# Auto-detect structure from stdin
+cat data.jsonl | clickhouse-local --query="SELECT * FROM table LIMIT 10"
+```
+
+```bash Format Conversion
+# Convert CSV to Parquet
+clickhouse-local --query="SELECT * FROM file('input.csv', CSV)" --format=Parquet > output.parquet
+
+# Convert JSON to TSV
+clickhouse-local --input-format=JSONEachRow --output-format=TabSeparated \
+  --query="SELECT * FROM table" < input.jsonl > output.tsv
+```
+</CodeGroup>
+
+## Input Data Options
+
+### Table File and Structure
+
+```bash
+# Specify input file and structure
+clickhouse-local \
+  --file=data.csv \
+  --structure='id UInt32, name String, value Float64' \
+  --input-format=CSV \
+  --query="SELECT name, avg(value) FROM table GROUP BY name"
+
+# Custom table name
+clickhouse-local \
+  --table=users \
+  --file=users.csv \
+  --structure='id UInt32, email String' \
+  --query="SELECT * FROM users WHERE id > 100"
+
+# Auto-detect structure
+clickhouse-local \
+  --file=data.jsonl \
+  --input-format=JSONEachRow \
+  --query="SELECT * FROM table LIMIT 5"
+```
+
+### Processing Standard Input
+
+<CodeGroup>
+```bash Stdin with Structure
+# Process piped data
+echo -e "1,Alice\n2,Bob" | clickhouse-local \
+  --structure='id UInt32, name String' \
+  --input-format=CSV \
+  --query="SELECT * FROM table"
+```
+
+```bash Stdin Auto-Detection
+# Auto-detect format and structure
+cat data.jsonl | clickhouse-local \
+  --query="SELECT count() FROM table"
+
+# When no file specified, stdin is used
+cat data.csv | clickhouse-local \
+  --file=stdin \
+  --structure='a UInt32, b String' \
+  --input-format=CSV \
+  --query="SELECT * FROM table"
+```
+</CodeGroup>
+
+## Query Execution
+
+### Single Query Mode
+
+```bash
+# Execute query and exit
+clickhouse-local --query="SELECT version()"
+
+# Complex analytical query
+clickhouse-local --file=sales.csv --query="
+  SELECT 
+    product,
+    toStartOfMonth(date) AS month,
+    sum(amount) AS total_sales
+  FROM table
+  GROUP BY product, month
+  ORDER BY month, total_sales DESC
+" --format=Pretty
+```
+
+### Queries from File
+
+```bash
+# Execute SQL from file
+clickhouse-local --queries-file=analysis.sql
+
+# Multiple query files
+clickhouse-local --queries-file=setup.sql --queries-file=queries.sql
+
+# Combine with input data
+clickhouse-local \
+  --file=data.csv \
+  --structure='id UInt32, value Float64' \
+  --queries-file=transform.sql
+```
+
+### Interactive Mode
+
+```bash
+# Start interactive session
+clickhouse-local --interactive
+
+# Interactive with existing data
+clickhouse-local \
+  --file=data.csv \
+  --structure='id UInt32, name String' \
+  --interactive
+
+# Use persistent storage
+clickhouse-local --path=/tmp/clickhouse-local --interactive
+```
+
+## File Formats
+
+### Input Formats
+
+<CodeGroup>
+```bash Structured Formats
+# CSV
+clickhouse-local --input-format=CSV --file=data.csv --query="SELECT * FROM table"
+
+# TSV (TabSeparated)
+clickhouse-local --input-format=TabSeparated --file=data.tsv --query="SELECT * FROM table"
+
+# JSON Lines
+clickhouse-local --input-format=JSONEachRow --file=data.jsonl --query="SELECT * FROM table"
+```
+
+```bash Binary Formats
+# Parquet
+clickhouse-local --query="SELECT * FROM file('data.parquet', Parquet)"
+
+# Native ClickHouse format
+clickhouse-local --query="SELECT * FROM file('data.native', Native)"
+
+# Arrow
+clickhouse-local --query="SELECT * FROM file('data.arrow', Arrow)"
+```
+
+```bash Log Formats
+# Regex pattern matching
+clickhouse-local --query="
+  SELECT * FROM file('access.log', Regexp, 'ip String, timestamp DateTime, path String')
+"
+```
+</CodeGroup>
+
+### Output Formats
+
+```bash
+# Pretty table output
+clickhouse-local --query="SELECT * FROM file('data.csv')" --format=Pretty
+
+# JSON output
+clickhouse-local --query="SELECT * FROM file('data.csv')" --format=JSON
+
+# Parquet output
+clickhouse-local --query="SELECT * FROM file('data.csv')" --format=Parquet > output.parquet
+
+# Vertical format for wide rows
+clickhouse-local --query="SELECT * FROM file('data.csv') LIMIT 1" --format=Vertical
+```
+
+## Data Storage
+
+### Temporary Storage (Default)
+
+By default, `clickhouse-local` uses a temporary directory that is cleaned up on exit:
+
+```bash
+# Uses temporary storage automatically
+clickhouse-local --query="CREATE TABLE test (id UInt32) ENGINE=Memory; INSERT INTO test VALUES (1);"
+```
+
+### Persistent Storage
+
+```bash
+# Use persistent path
+clickhouse-local --path=/var/lib/clickhouse-local --query="
+  CREATE TABLE persistent (id UInt32, data String) ENGINE=MergeTree ORDER BY id;
+  INSERT INTO persistent VALUES (1, 'test');
+"
+
+# Reuse existing database
+clickhouse-local --path=/var/lib/clickhouse-local --query="SELECT * FROM persistent"
+
+# Specify database name
+clickhouse-local --path=/var/lib/clickhouse-local --database=mydb --interactive
+```
+
+### System Tables Access
+
+```bash
+# Query system tables
+clickhouse-local --query="SELECT * FROM system.functions WHERE name LIKE '%Date%'"
+
+# Only load system tables (no user databases)
+clickhouse-local --only-system-tables --query="SHOW TABLES FROM system"
+```
+
+## Advanced Features
+
+### User-Defined Functions
+
+```bash
+# Directory for UDF scripts
+clickhouse-local \
+  --user_scripts_path=/path/to/scripts \
+  --query="SELECT myCustomFunction(data) FROM table"
+```
+
+### Settings and Configuration
+
+```bash
+# Set query execution settings
+clickhouse-local \
+  --max_threads=8 \
+  --max_memory_usage=10000000000 \
+  --query="SELECT * FROM file('huge.csv')"
+
+# Load custom configuration
+clickhouse-local --config-file=/path/to/config.xml --query="SELECT 1"
+
+# Set logger level
+clickhouse-local --log-level=trace --query="SELECT * FROM file('data.csv')"
+```
+
+### Performance Options
+
+```bash
+# Enable stack traces for debugging
+clickhouse-local --stacktrace --query="SELECT problematicFunction()"
+
+# Echo queries (useful for debugging scripts)
+clickhouse-local --echo --queries-file=batch.sql
+
+# Verbose output
+clickhouse-local --verbose --query="SELECT * FROM file('data.csv')"
+```
+
+## Common Use Cases
+
+<CodeGroup>
+```bash Data Transformation
+# Transform CSV to JSON with filtering
+clickhouse-local --query="
+  SELECT 
+    id,
+    upper(name) AS name,
+    value * 1.1 AS adjusted_value
+  FROM file('input.csv', CSV, 'id UInt32, name String, value Float64')
+  WHERE value > 100
+" --format=JSONEachRow > output.jsonl
+```
+
+```bash Log Analysis
+# Analyze nginx access logs
+clickhouse-local --query="
+  SELECT 
+    path,
+    count() AS requests,
+    avg(response_time) AS avg_time
+  FROM file('access.log', TSV, 'ip String, timestamp DateTime, path String, response_time Float32')
+  GROUP BY path
+  ORDER BY requests DESC
+  LIMIT 10
+" --format=Pretty
+```
+
+```bash Data Aggregation
+# Aggregate multiple CSV files
+clickhouse-local --query="
+  SELECT 
+    date,
+    sum(revenue) AS total_revenue,
+    count(DISTINCT user_id) AS unique_users
+  FROM file('sales_*.csv', CSV)
+  GROUP BY date
+  ORDER BY date
+" --format=CSVWithNames > aggregated.csv
+```
+
+```bash Schema Inspection
+# Infer and display schema
+clickhouse-local --query="
+  DESCRIBE TABLE file('data.parquet', Parquet)
+" --format=Pretty
+
+# Sample data exploration
+clickhouse-local --query="
+  SELECT * FROM file('unknown_format.jsonl', JSONEachRow)
+  LIMIT 10
+" --format=Vertical
+```
+</CodeGroup>
+
+## Working with Remote Files
+
+```bash
+# Query HTTP endpoint
+clickhouse-local --query="
+  SELECT * FROM url('https://example.com/data.csv', CSV)
+"
+
+# Query S3 files
+clickhouse-local --query="
+  SELECT count() FROM s3('s3://bucket/path/*.csv', CSV)
+"
+
+# Query multiple remote sources
+clickhouse-local --query="
+  SELECT * FROM url('https://example.com/data1.json', JSONEachRow)
+  UNION ALL
+  SELECT * FROM url('https://example.com/data2.json', JSONEachRow)
+"
+```
+
+## Database Engines
+
+When using persistent storage, you can create tables with various engines:
+
+```bash
+# MergeTree for analytics
+clickhouse-local --path=/tmp/data --query="
+  CREATE TABLE events (
+    date Date,
+    user_id UInt32,
+    action String
+  ) ENGINE=MergeTree
+  ORDER BY (date, user_id);
+"
+
+# Memory engine for temporary data
+clickhouse-local --query="
+  CREATE TABLE temp (id UInt32) ENGINE=Memory;
+  INSERT INTO temp SELECT number FROM numbers(100);
+  SELECT * FROM temp;
+"
+
+# File engine for external data
+clickhouse-local --path=/tmp/data --query="
+  CREATE TABLE external (id UInt32, value String) 
+  ENGINE=File(CSV);
+"
+```
+
+## Configuration File
+
+Example `config.xml` for `clickhouse-local`:
+
+```xml
+<config>
+    <logger>
+        <level>trace</level>
+        <log>/tmp/clickhouse-local.log</log>
+    </logger>
+    
+    <max_threads>4</max_threads>
+    <max_memory_usage>10000000000</max_memory_usage>
+    
+    <format_schema_path>/path/to/format_schemas/</format_schema_path>
+</config>
+```
+
+## Error Handling
+
+```bash
+# Ignore errors and continue
+clickhouse-local --ignore-error --queries-file=batch.sql
+
+# Enable stack traces
+clickhouse-local --stacktrace --query="SELECT * FROM problematic_file.csv"
+```
+
+## Tips and Best Practices
+
+1. **Structure Auto-Detection**: Let ClickHouse detect structure when possible:
+   ```bash
+   clickhouse-local --query="SELECT * FROM file('data.csv')"
+   ```
+
+2. **Memory Management**: Set limits for large datasets:
+   ```bash
+   clickhouse-local --max_memory_usage=5000000000 --query="..."
+   ```
+
+3. **Parallel Processing**: Use multiple threads:
+   ```bash
+   clickhouse-local --max_threads=8 --query="SELECT * FROM file('huge.csv')"
+   ```
+
+4. **Output Redirection**: Save results efficiently:
+   ```bash
+   clickhouse-local --query="..." --format=Native | gzip > result.native.gz
+   ```
+
+## See Also
+
+- [clickhouse-client](/tools/clickhouse-client) - Interactive client for ClickHouse server
+- [clickhouse-benchmark](/tools/clickhouse-benchmark) - Performance testing
+- [File Table Function](/functions/table/file) - Query files in SQL
+- [Table Engines](/engines/overview) - Available storage engines

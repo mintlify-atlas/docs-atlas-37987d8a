@@ -1,0 +1,196 @@
+---
+title: Table Functions Overview
+description: Table functions in ClickHouse create temporary tables from various data sources
+---
+
+# Table Functions Overview
+
+Table functions in ClickHouse are special functions that can be used in the `FROM` clause of a query to create temporary table objects. They provide a way to read data from various sources without creating permanent tables.
+
+## Key Concepts
+
+Table functions:
+- Return a temporary `Storage` object for query execution
+- Can be used anywhere a table name is expected
+- Support schema inference with `auto` format and structure
+- Can be used with `INSERT INTO FUNCTION` for writing data
+
+## Common Table Functions
+
+### File-Based Functions
+
+- [`file`](/functions/table/file) - Read data from local files
+- `s3` - Read data from Amazon S3
+- `azureBlobStorage` - Read data from Azure Blob Storage
+- `hdfs` - Read data from HDFS
+
+### Network Functions
+
+- [`url`](/functions/table/url) - Read data from HTTP/HTTPS endpoints
+- [`remote`](/functions/table/remote) - Query remote ClickHouse servers
+- [`cluster`](/functions/table/remote#cluster-function) - Query a cluster of ClickHouse servers
+
+### Data Generation Functions
+
+- `numbers` - Generate a table with sequential numbers
+- `zeros` - Generate a table with zeros
+- `generateRandom` - Generate random data
+- `generateSeries` - Generate a series of values
+
+### Database Integration Functions
+
+- `mysql` - Connect to MySQL databases
+- `postgresql` - Connect to PostgreSQL databases
+- `mongodb` - Connect to MongoDB
+- `sqlite` - Connect to SQLite databases
+
+## General Syntax Pattern
+
+Most file-like table functions follow this pattern:
+
+```sql
+function_name(
+    source,           -- File path, URL, or connection string
+    format,           -- Data format (CSV, JSON, Parquet, etc.)
+    structure,        -- Column definitions (can be 'auto')
+    compression       -- Compression method (optional)
+)
+```
+
+## Schema Inference
+
+Many table functions support automatic schema detection:
+
+```sql
+-- Automatically detect format and structure
+SELECT * FROM file('data.csv')
+
+-- Explicitly specify format, auto-detect structure
+SELECT * FROM file('data.bin', 'Native', 'auto')
+```
+
+## Usage Examples
+
+### Reading Data
+
+```sql
+-- Read from a CSV file
+SELECT * FROM file('data.csv', 'CSV', 'id UInt32, name String')
+
+-- Read from a URL
+SELECT * FROM url('https://example.com/data.json', 'JSONEachRow')
+
+-- Query a remote server
+SELECT * FROM remote('server1:9000', 'mydb', 'mytable')
+```
+
+### Writing Data
+
+```sql
+-- Write to a file
+INSERT INTO FUNCTION file('output.csv', 'CSV', 'id UInt32, value String')
+SELECT id, value FROM source_table
+
+-- Write to a URL (HTTP POST)
+INSERT INTO FUNCTION url('https://example.com/endpoint', 'JSONEachRow')
+SELECT * FROM source_table
+```
+
+### Creating Tables
+
+Table functions can be used to create permanent tables:
+
+```sql
+CREATE TABLE my_table AS
+SELECT * FROM file('data.parquet')
+
+CREATE TABLE my_table
+ENGINE = File(CSV)
+AS SELECT * FROM url('https://example.com/data.csv')
+```
+
+## Supported Data Formats
+
+ClickHouse supports numerous data formats with table functions:
+
+- **Text formats**: CSV, TSV, TabSeparated, JSONEachRow, LineAsString
+- **Binary formats**: Native, Parquet, ORC, Arrow
+- **Structured formats**: JSON, XML, Avro, Protobuf, CapnProto
+- **Special formats**: Values, Vertical, Pretty, Null
+
+See the [Formats](/integration/data-formats) documentation for a complete list.
+
+## Compression Support
+
+Most table functions support compression:
+
+- `gzip` / `gz`
+- `brotli`
+- `lz4`
+- `zstd`
+- `xz` / `lzma`
+- `bz2`
+- `snappy`
+- `deflate`
+- `none` (no compression)
+- `auto` (detect from file extension)
+
+## Performance Considerations
+
+### Parallel Processing
+
+```sql
+-- Use glob patterns for parallel reading
+SELECT * FROM file('logs/*.csv', 'CSV')
+
+-- Use cluster function for distributed queries
+SELECT * FROM cluster('my_cluster', 'db', 'table')
+```
+
+### Filtering
+
+Filtering can reduce data transfer:
+
+```sql
+-- Filter is pushed down when possible
+SELECT * FROM url('https://example.com/data.csv', 'CSV')
+WHERE date >= today() - 7
+```
+
+## Virtual Columns
+
+Table functions provide virtual columns for metadata:
+
+- `_path` - Source file path or URL
+- `_file` - File name
+- `_size` - File size in bytes
+- `_line` - Line number (text formats)
+- `_offset` - Byte offset (some formats)
+
+Example:
+
+```sql
+SELECT _path, _file, count()
+FROM file('logs/*.csv', 'CSV')
+GROUP BY _path, _file
+```
+
+## Access Control
+
+Table functions respect ClickHouse access control:
+
+```sql
+-- Requires appropriate permissions
+GRANT URL ON *.* TO user1
+GRANT FILE ON *.* TO user2
+GRANT REMOTE ON *.* TO user3
+```
+
+Some table functions (like `url` and `remote`) are restricted in readonly mode for security.
+
+## See Also
+
+- [File Table Function](/functions/table/file)
+- [URL Table Function](/functions/table/url)
+- [Remote Table Function](/functions/table/remote)
+- [Storage Engines](/engines/overview)

@@ -1,0 +1,490 @@
+---
+title: Tutorial
+description: Learn ClickHouse fundamentals through hands-on examples with real table engines and data types
+---
+
+# ClickHouse Tutorial
+
+This tutorial will guide you through the fundamental concepts of ClickHouse using practical examples.
+
+## Prerequisites
+
+Before starting, ensure you have ClickHouse installed and running. See the [Installation Guide](/installation) if needed.
+
+## Table Engines
+
+ClickHouse supports multiple table engines optimized for different use cases. Let's explore the most important ones.
+
+### MergeTree - The Primary Engine
+
+The `MergeTree` family is the workhorse of ClickHouse, designed for high-volume data insertion and analytical queries.
+
+<Steps>
+  <Step title="Create a MergeTree Table">
+    ```sql
+    CREATE TABLE user_events (
+        event_id UInt64,
+        event_time DateTime,
+        event_date Date,
+        user_id UInt64,
+        event_type String,
+        page_url String,
+        country_code FixedString(2),
+        device_type LowCardinality(String),
+        revenue Nullable(Float32)
+    ) ENGINE = MergeTree
+    ORDER BY (event_date, user_id, event_id)
+    PARTITION BY toYYYYMM(event_date)
+    SETTINGS index_granularity = 8192;
+    ```
+    
+    <Note>
+    **Key Concepts:**
+    - `ORDER BY`: Defines the primary key and sort order (critical for query performance)
+    - `PARTITION BY`: Splits data into partitions for efficient data management
+    - `index_granularity`: Controls the granularity of the primary index
+    </Note>
+  </Step>
+  
+  <Step title="Insert Sample Data">
+    ```sql
+    INSERT INTO user_events SELECT
+        number AS event_id,
+        now() - INTERVAL number SECOND AS event_time,
+        toDate(now() - INTERVAL number SECOND) AS event_date,
+        number % 10000 AS user_id,
+        ['page_view', 'click', 'purchase', 'signup', 'logout'][number % 5 + 1] AS event_type,
+        concat('https://example.com/page/', toString(number % 100)) AS page_url,
+        ['US', 'UK', 'FR', 'DE', 'JP', 'CN', 'BR', 'IN'][number % 8 + 1] AS country_code,
+        ['desktop', 'mobile', 'tablet'][number % 3 + 1] AS device_type,
+        if(number % 20 = 0, rand() % 500, NULL) AS revenue
+    FROM numbers(100000);
+    ```
+    
+    This generates 100,000 realistic events for testing.
+  </Step>
+  
+  <Step title="Query the Data">
+    ```sql
+    SELECT 
+        event_type,
+        device_type,
+        COUNT(*) AS events,
+        COUNT(DISTINCT user_id) AS unique_users,
+        SUM(revenue) AS total_revenue
+    FROM user_events
+    WHERE event_date >= today() - INTERVAL 7 DAY
+    GROUP BY event_type, device_type
+    ORDER BY events DESC;
+    ```
+  </Step>
+</Steps>
+
+### Log Engine - Simple Storage
+
+The `Log` engine is the simplest table engine, suitable for small reference tables or temporary data.
+
+```sql
+CREATE TABLE country_codes (
+    code FixedString(2),
+    name String,
+    continent String
+) ENGINE = Log;
+
+INSERT INTO country_codes VALUES
+    ('US', 'United States', 'North America'),
+    ('UK', 'United Kingdom', 'Europe'),
+    ('FR', 'France', 'Europe'),
+    ('DE', 'Germany', 'Europe'),
+    ('JP', 'Japan', 'Asia');
+```
+
+<Tip>
+Use `Log` engine for:
+- Small lookup tables
+- Temporary data that doesn't need indexing
+- Tables written once and read many times
+</Tip>
+
+### ReplicatedMergeTree - High Availability
+
+For production deployments requiring replication:
+
+```sql
+CREATE TABLE replicated_events (
+    event_id UInt64,
+    event_time DateTime,
+    user_id UInt64,
+    data String
+) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/events', '{replica}')
+ORDER BY (event_time, user_id);
+```
+
+<Note>
+`ReplicatedMergeTree` provides:
+- Automatic data replication across nodes
+- Fault tolerance
+- Consistent reads across replicas
+- Automatic deduplication
+</Note>
+
+## Data Types
+
+ClickHouse offers a rich set of data types optimized for analytical workloads.
+
+### Numeric Types
+
+```sql
+CREATE TABLE numeric_examples (
+    -- Unsigned integers
+    tiny_int UInt8,        -- 0 to 255
+    small_int UInt16,      -- 0 to 65,535
+    medium_int UInt32,     -- 0 to 4,294,967,295
+    big_int UInt64,        -- 0 to 18,446,744,073,709,551,615
+    huge_int UInt128,      -- Even larger integers
+    
+    -- Signed integers
+    signed_tiny Int8,      -- -128 to 127
+    signed_big Int64,      -- Standard integer
+    
+    -- Floating point
+    price Float32,         -- Single precision
+    precise_price Float64, -- Double precision
+    
+    -- Fixed point (for exact decimal arithmetic)
+    money Decimal(18, 2)   -- 18 digits, 2 decimal places
+) ENGINE = MergeTree
+ORDER BY tuple();
+```
+
+<Tip>
+Choose the smallest data type that fits your data to:
+- Reduce storage requirements
+- Improve query performance
+- Decrease memory usage
+</Tip>
+
+### String Types
+
+```sql
+CREATE TABLE string_examples (
+    -- Variable length string
+    description String,
+    
+    -- Fixed length string (more efficient for fixed-size data)
+    country_code FixedString(2),
+    uuid_value FixedString(36),
+    
+    -- Low cardinality optimization for strings with few unique values
+    status LowCardinality(String),
+    category LowCardinality(String)
+) ENGINE = MergeTree
+ORDER BY tuple();
+```
+
+<Note>
+**When to use `LowCardinality`:**
+- Column has < 10,000 unique values
+- High repetition of values
+- Examples: status codes, categories, countries, device types
+
+Benefits:
+- Reduced storage (50-90% compression)
+- Faster GROUP BY queries
+- Lower memory usage
+</Note>
+
+### Date and Time Types
+
+```sql
+CREATE TABLE time_examples (
+    -- Date only (no time component)
+    event_date Date,           -- 1970-01-01 to 2149-06-06
+    
+    -- Date with extended range
+    extended_date Date32,      -- 1900-01-01 to 2299-12-31
+    
+    -- Date and time (second precision)
+    created_at DateTime,       -- Unix timestamp
+    
+    -- Date and time with timezone
+    created_at_tz DateTime('America/New_York'),
+    
+    -- High precision timestamps
+    event_time_ms DateTime64(3), -- Millisecond precision
+    event_time_us DateTime64(6), -- Microsecond precision
+    event_time_ns DateTime64(9)  -- Nanosecond precision
+) ENGINE = MergeTree
+ORDER BY event_date;
+```
+
+### Array and Tuple Types
+
+```sql
+CREATE TABLE complex_types (
+    -- Arrays (all elements must be same type)
+    tags Array(String),
+    scores Array(Float32),
+    
+    -- Tuples (named fields with different types)
+    location Tuple(latitude Float64, longitude Float64),
+    user_info Tuple(id UInt64, name String, active UInt8),
+    
+    -- Nested structures
+    purchase_items Nested(
+        item_id UInt64,
+        quantity UInt32,
+        price Float32
+    )
+) ENGINE = MergeTree
+ORDER BY tuple();
+
+INSERT INTO complex_types VALUES
+    (
+        ['analytics', 'clickhouse', 'tutorial'],
+        [9.5, 8.7, 9.2],
+        (37.7749, -122.4194),
+        (12345, 'Alice', 1),
+        [101, 102],
+        [2, 5],
+        [29.99, 49.99]
+    );
+```
+
+### Nullable Types
+
+```sql
+CREATE TABLE nullable_example (
+    id UInt64,
+    -- Nullable allows NULL values (adds overhead)
+    optional_value Nullable(String),
+    optional_price Nullable(Float32)
+) ENGINE = MergeTree
+ORDER BY id;
+
+INSERT INTO nullable_example VALUES
+    (1, 'value1', 99.99),
+    (2, NULL, 149.50),
+    (3, 'value3', NULL);
+```
+
+<Warning>
+**Avoid `Nullable` when possible:**
+- Adds storage overhead (1 byte per value)
+- Slower query performance
+- Use default values instead when appropriate
+
+Good use cases:
+- Truly optional fields
+- Joining with external data sources
+- JSON data with missing fields
+</Warning>
+
+## Partitioning and Ordering
+
+### Understanding ORDER BY
+
+The `ORDER BY` clause determines:
+- Primary key for data lookup
+- Physical sort order on disk
+- Which queries will be fast
+
+```sql
+CREATE TABLE analytics (
+    event_date Date,
+    user_id UInt64,
+    event_id UInt64,
+    event_type String,
+    value Float32
+) ENGINE = MergeTree
+ORDER BY (event_date, user_id, event_id);
+```
+
+**This ordering makes these queries fast:**
+```sql
+-- Fast: filters on prefix of ORDER BY
+SELECT * FROM analytics 
+WHERE event_date = '2026-03-03' AND user_id = 12345;
+
+-- Fast: GROUP BY on prefix of ORDER BY  
+SELECT event_date, COUNT(*) 
+FROM analytics 
+GROUP BY event_date;
+
+-- Slow: filters on non-prefix columns
+SELECT * FROM analytics WHERE event_type = 'click';
+```
+
+### Partitioning Strategy
+
+Partitions split data into separate directories for efficient data management:
+
+```sql
+CREATE TABLE partitioned_events (
+    event_time DateTime,
+    event_date Date,
+    user_id UInt64,
+    event_type String
+) ENGINE = MergeTree
+ORDER BY (event_date, user_id)
+PARTITION BY toYYYYMM(event_date);  -- Monthly partitions
+```
+
+**Benefits of partitioning:**
+- Drop old data instantly: `ALTER TABLE partitioned_events DROP PARTITION '202601'`
+- Query optimization for time-range queries
+- Parallel processing of partitions
+
+<Tip>
+**Partitioning best practices:**
+- Keep partitions between 100MB and 10GB each
+- Common strategies: daily, weekly, or monthly
+- Don't over-partition (max ~1000 partitions)
+</Tip>
+
+## Aggregation and GROUP BY
+
+```sql
+SELECT 
+    country_code,
+    device_type,
+    COUNT(*) AS total_events,
+    COUNT(DISTINCT user_id) AS unique_users,
+    SUM(revenue) AS total_revenue,
+    AVG(revenue) AS avg_revenue,
+    quantile(0.95)(revenue) AS p95_revenue
+FROM user_events
+WHERE event_date >= today() - 7
+GROUP BY country_code, device_type
+HAVING unique_users > 100
+ORDER BY total_revenue DESC
+LIMIT 10;
+```
+
+### Common Aggregation Functions
+
+```sql
+SELECT
+    COUNT(*) AS total,
+    COUNT(DISTINCT user_id) AS unique_users,
+    uniq(user_id) AS approx_unique,  -- HyperLogLog approximation
+    SUM(revenue) AS total_revenue,
+    AVG(revenue) AS avg_revenue,
+    MIN(event_time) AS first_event,
+    MAX(event_time) AS last_event,
+    median(revenue) AS median_revenue,
+    quantile(0.95)(revenue) AS p95,
+    quantiles(0.5, 0.9, 0.99)(revenue) AS percentiles,
+    groupArray(event_type) AS event_types_array,
+    groupUniqArray(country_code) AS unique_countries
+FROM user_events;
+```
+
+## JOINs in ClickHouse
+
+```sql
+-- Create dimension table
+CREATE TABLE users (
+    user_id UInt64,
+    name String,
+    signup_date Date,
+    country_code FixedString(2)
+) ENGINE = MergeTree
+ORDER BY user_id;
+
+INSERT INTO users SELECT
+    number AS user_id,
+    concat('User', toString(number)) AS name,
+    today() - INTERVAL number DAY AS signup_date,
+    ['US', 'UK', 'FR'][number % 3 + 1] AS country_code
+FROM numbers(10000);
+
+-- Join with events
+SELECT 
+    u.name,
+    u.country_code,
+    COUNT(*) AS total_events,
+    SUM(e.revenue) AS total_revenue
+FROM user_events e
+INNER JOIN users u ON e.user_id = u.user_id
+WHERE e.event_date >= today() - 7
+GROUP BY u.name, u.country_code
+ORDER BY total_revenue DESC
+LIMIT 10;
+```
+
+<Note>
+**JOIN Performance Tips:**
+- Put smaller table on the right side
+- Use `INNER JOIN` when possible (faster than `LEFT JOIN`)
+- Consider dictionary tables for small dimension tables
+- Pre-aggregate data before joining when possible
+</Note>
+
+## Working with Time Series Data
+
+```sql
+SELECT 
+    toStartOfHour(event_time) AS hour,
+    COUNT(*) AS events_per_hour,
+    COUNT(DISTINCT user_id) AS active_users
+FROM user_events
+WHERE event_date >= today()
+GROUP BY hour
+ORDER BY hour;
+
+-- Time-based windowing
+SELECT 
+    toStartOfInterval(event_time, INTERVAL 15 MINUTE) AS time_bucket,
+    event_type,
+    COUNT(*) AS events
+FROM user_events
+WHERE event_time >= now() - INTERVAL 6 HOUR
+GROUP BY time_bucket, event_type
+ORDER BY time_bucket, event_type;
+```
+
+## Clean Up
+
+Drop the tutorial tables:
+
+```sql
+DROP TABLE IF EXISTS user_events;
+DROP TABLE IF EXISTS country_codes;
+DROP TABLE IF EXISTS numeric_examples;
+DROP TABLE IF EXISTS string_examples;
+DROP TABLE IF EXISTS time_examples;
+DROP TABLE IF EXISTS complex_types;
+DROP TABLE IF EXISTS nullable_example;
+DROP TABLE IF EXISTS analytics;
+DROP TABLE IF EXISTS partitioned_events;
+DROP TABLE IF EXISTS users;
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="MergeTree Deep Dive" icon="database" href="/engines/mergetree">
+    Learn advanced MergeTree features and optimization techniques
+  </Card>
+  
+  <Card title="Data Types Reference" icon="code" href="/data-types/overview">
+    Complete reference of all ClickHouse data types
+  </Card>
+  
+  <Card title="Query Optimization" icon="gauge-high" href="/performance/optimization">
+    Techniques to make your queries blazing fast
+  </Card>
+  
+  <Card title="Functions" icon="function" href="/functions/overview">
+    Explore ClickHouse's extensive function library
+  </Card>
+</CardGroup>
+
+<Tip>
+**Practice makes perfect!** Try modifying these examples:
+- Change partition strategies
+- Experiment with different data types
+- Add secondary indexes
+- Test query performance with larger datasets
+</Tip>

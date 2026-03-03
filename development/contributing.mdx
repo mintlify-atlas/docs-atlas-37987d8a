@@ -1,0 +1,387 @@
+---
+title: Contributing to ClickHouse
+description: Guidelines and best practices for contributing to the ClickHouse project
+---
+
+ClickHouse is an open-source project that welcomes contributions in many forms: code, documentation, bug reports, and feature requests. This guide helps you make effective contributions.
+
+## Getting Started
+
+Thank you for your interest in contributing to ClickHouse! Your efforts help make the project better for everyone.
+
+### Ways to Contribute
+
+- **Code**: Bug fixes, new features, performance improvements, and refactoring
+- **Documentation**: Improve existing docs, add examples, fix typos, translate content
+- **Testing**: Write new tests, improve test coverage, report bugs
+- **Community**: Answer questions, participate in discussions, help other users
+
+## Legal Requirements
+
+<Steps>
+
+<Step title="Sign the CLA">
+
+When you open your first pull request, a bot will ask you to sign the **ClickHouse Individual CLA** (Contributor License Agreement).
+
+<Note>
+You must review and sign the CLA before your contributions can be merged.
+</Note>
+
+</Step>
+
+<Step title="Corporate CLA (Optional)">
+
+If you're contributing as part of your employment, your company may want to sign a **ClickHouse Corporate CLA**.
+
+Contact [legal@clickhouse.com](mailto:legal@clickhouse.com) for more information.
+
+</Step>
+
+</Steps>
+
+## Code Contribution Workflow
+
+<Steps>
+
+<Step title="Fork and clone the repository">
+
+```bash
+# Fork the repository on GitHub, then clone your fork
+git clone --recursive https://github.com/YOUR_USERNAME/ClickHouse.git
+cd ClickHouse
+
+# Add upstream remote
+git remote add upstream https://github.com/ClickHouse/ClickHouse.git
+```
+
+</Step>
+
+<Step title="Create a feature branch">
+
+<Warning>
+Do **not** commit to the master branch. Create a new branch for every task.
+</Warning>
+
+```bash
+# Create and switch to a new branch
+git checkout -b fix/my-bugfix
+# or
+git checkout -b feature/my-feature
+```
+
+When working with a branch:
+- Do **not** use rebase or amend
+- Add new commits instead
+
+</Step>
+
+<Step title="Make your changes">
+
+Write your code following the [coding style guidelines](#coding-style-guidelines) below.
+
+Key principles:
+- Keep changes focused and atomic
+- Write clear, self-documenting code
+- Add tests for new functionality
+- Update documentation as needed
+
+</Step>
+
+<Step title="Build and test locally">
+
+```bash
+# Build the project
+mkdir build && cd build
+cmake ..
+ninja
+
+# Run tests
+ctest
+```
+
+See the [Building](/development/building) and [Testing](/development/testing) guides for details.
+
+</Step>
+
+<Step title="Commit your changes">
+
+Write clear commit messages following these conventions:
+
+```bash
+git add .
+git commit -m "Fix memory leak in MergeTree query processing
+
+This fixes an issue where temporary blocks were not properly released
+after query completion, causing memory usage to grow over time.
+
+Fixes: #12345"
+```
+
+<Note>
+When writing commit messages, wrap literal names from ClickHouse SQL language, classes, functions, or log messages in inline code blocks: \`MergeTree\`
+</Note>
+
+</Step>
+
+<Step title="Push and create pull request">
+
+```bash
+# Push your branch to your fork
+git push origin fix/my-bugfix
+```
+
+Then create a pull request on GitHub from your fork to the main ClickHouse repository.
+
+</Step>
+
+<Step title="Add labels and description">
+
+When creating your PR:
+
+1. Add the `pr-documentation` label if your changes include documentation
+2. Follow the pull request template (`.github/PULL_REQUEST_TEMPLATE.md`)
+3. Include:
+   - **Changelog category**: `Bug Fix`, `New Feature`, `Improvement`, `CI Fix or improvement`, etc.
+   - **Changelog entry**: Brief description of the change
+   - **Related issues**: Link to any related issues
+
+<Note>
+Use "Bug Fix" only for real bug fixes. For CI-related changes, use "CI Fix or improvement".
+</Note>
+
+</Step>
+
+<Step title="Respond to review feedback">
+
+Reviewers may request changes. Address feedback by:
+- Making additional commits to your branch
+- Pushing the updates to your fork
+- Responding to review comments
+
+Do **not** force-push or rebase unless specifically requested.
+
+</Step>
+
+</Steps>
+
+## Coding Style Guidelines
+
+### C++ Code Style
+
+#### Braces and Formatting
+
+<Warning>
+Always use **Allman-style braces** (opening brace on a new line). This is enforced by the style check in CI.
+</Warning>
+
+**Correct:**
+```cpp
+if (condition)
+{
+    doSomething();
+}
+else
+{
+    doSomethingElse();
+}
+```
+
+**Incorrect:**
+```cpp
+if (condition) {
+    doSomething();
+} else {
+    doSomethingElse();
+}
+```
+
+#### Naming Conventions
+
+- **Classes and types**: `PascalCase` (e.g., `MergeTreeData`, `IBlockInputStream`)
+- **Functions and methods**: `camelCase` (e.g., `executeQuery`, `readData`)
+- **Variables**: `snake_case` (e.g., `block_size`, `query_context`)
+- **Constants**: `UPPER_CASE` (e.g., `MAX_BLOCK_SIZE`)
+
+#### Writing Style in Comments and Documentation
+
+When mentioning code elements:
+- Write function/method names as `f` not `f()` - for mathematical purity when referring to the function itself
+- Wrap literal names in inline code: \`MergeTree\`, \`SELECT\`, \`executeQuery\`
+- For errors, say "exception" not "crash" (exceptions don't crash the server in release builds)
+
+### Code Quality
+
+#### Avoid Common Pitfalls
+
+<Warning>
+**Never use `sleep` in C++ code to fix race conditions.** This is not acceptable. Use proper synchronization primitives.
+</Warning>
+
+```cpp
+// BAD - Never do this!
+std::this_thread::sleep_for(std::chrono::seconds(1));
+
+// GOOD - Use proper synchronization
+std::unique_lock<std::mutex> lock(mutex);
+condition_variable.wait(lock, [&]{ return data_ready; });
+```
+
+#### Memory Management
+
+- Prefer RAII and smart pointers over manual memory management
+- Use `std::unique_ptr` for exclusive ownership
+- Use `std::shared_ptr` only when necessary
+- Be aware of the custom allocators used in ClickHouse
+
+### Testing Requirements
+
+- Add tests for all new functionality
+- Prefer adding a new test over extending existing ones (in `tests/queries`)
+- Do **not** add "no-*" tags (like "no-parallel") unless strictly necessary
+- Write descriptive test names
+
+## Documentation Contributions
+
+### Documentation Types
+
+ClickHouse has two documentation repositories:
+
+1. **Reference docs**: In the main [ClickHouse repository](https://github.com/ClickHouse/ClickHouse/tree/master/docs)
+2. **User guides**: In [clickhouse-docs repository](https://github.com/ClickHouse/clickhouse-docs)
+
+### Contributing to Documentation
+
+<CardGroup cols={2}>
+
+<Card title="Via GitHub">
+  Fork, edit, commit, and open a pull request with the `pr-documentation` label
+</Card>
+
+<Card title="Via Website">
+  Click the "Edit this page" 🖋 button on any docs page at clickhouse.com/docs
+</Card>
+
+</CardGroup>
+
+### Documentation Guidelines
+
+- **Language**: Always contribute new information in English first
+- **Accuracy**: Ensure technical accuracy and completeness
+- **Examples**: Add practical examples for all functionality
+- **Clarity**: Avoid jargon; use clear, specific terms
+- **Formatting**: Follow the Markdown dialect used in ClickHouse docs
+
+See the [docs README](https://github.com/ClickHouse/ClickHouse/blob/master/docs/README.md) for detailed documentation guidelines.
+
+## Pull Request Best Practices
+
+### Before Submitting
+
+- [ ] Code builds successfully
+- [ ] All tests pass locally
+- [ ] New tests added for new functionality
+- [ ] Documentation updated (if applicable)
+- [ ] Commit messages are clear and descriptive
+- [ ] Code follows ClickHouse style guidelines
+
+### PR Description Template
+
+Follow the template in `.github/PULL_REQUEST_TEMPLATE.md`:
+
+```markdown
+## Changelog category
+Bug Fix / New Feature / Improvement / CI Fix or improvement
+
+## Changelog entry
+Fixed memory leak in `MergeTree` query processing
+
+## Description
+This PR fixes a memory leak that occurred when processing queries...
+
+## Related Issues
+Fixes: #12345
+Related: #12346
+```
+
+### Linking to CI Reports
+
+If fixing a CI failure, include the URL to the CI report:
+
+```markdown
+Fixes ASan failure in integration tests:
+https://s3.amazonaws.com/clickhouse-test-reports/...
+```
+
+## Working with CI
+
+### Understanding CI Status
+
+<Note>
+When checking CI status, pay attention to the comment from the robot with links first. Look at the **Praktika reports** first - GitHub Actions logs usually contain less info.
+</Note>
+
+### CI Job Naming
+
+- **ASan**: Address Sanitizer (not "ASAN")
+- **TSan**: Thread Sanitizer
+- **MSan**: Memory Sanitizer
+- **UBSan**: Undefined Behavior Sanitizer
+
+### Machine Performance
+
+ARM machines in CI are not slow - they have similar performance to x86 machines.
+
+## Communication Guidelines
+
+### Where to Get Help
+
+- **Questions**: [Slack](https://clickhouse.com/slack) or [Telegram](https://telegram.me/clickhouse_en)
+- **Bug reports**: [GitHub Issues](https://github.com/ClickHouse/ClickHouse/issues)
+- **Development discussions**: GitHub Discussions or developer mailing list
+- **General inquiries**: [Contact page](https://clickhouse.com/company/contact)
+
+### Response Times
+
+Be patient. Reviewers are often busy. If you haven't received a response in a week, feel free to politely ping the PR.
+
+## Technical Resources
+
+<CardGroup cols={2}>
+
+<Card title="Architecture Overview" icon="book" href="/development/architecture">
+  Learn about ClickHouse's internal architecture
+</Card>
+
+<Card title="VLDB Paper" icon="file-pdf" href="https://www.vldb.org/pvldb/vol17/p3731-schulze.pdf">
+  Read "ClickHouse - Lightning Fast Analytics for Everyone"
+</Card>
+
+<Card title="Building Guide" icon="hammer" href="/development/building">
+  How to build ClickHouse from source
+</Card>
+
+<Card title="Testing Guide" icon="vial" href="/development/testing">
+  Testing framework and practices
+</Card>
+
+</CardGroup>
+
+## Additional Policies
+
+### AI Policy
+
+See [AI_POLICY.md](https://github.com/ClickHouse/ClickHouse/blob/master/AI_POLICY.md) for guidelines on AI-assisted contributions.
+
+### Code of Conduct
+
+- Be respectful and professional
+- Focus on technical merit
+- Avoid political, religious, or other off-topic discussions
+- Help create a welcoming environment for all contributors
+
+## Career Opportunities
+
+Interested in making ClickHouse your full-time job?
+
+Checkout [current openings](https://clickhouse.com/company/careers) or email [careers@clickhouse.com](mailto:careers@clickhouse.com).

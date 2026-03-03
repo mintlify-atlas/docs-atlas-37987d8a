@@ -1,0 +1,366 @@
+---
+title: MergeTree Family Engines
+description: Production-grade table engines with sorting, indexing, and background merging
+---
+
+The MergeTree family (`src/Storages/MergeTree/`) provides the most powerful and flexible table engines in ClickHouse. These engines are designed for high-volume analytical workloads with automatic data organization and optimization.
+
+## MergeTree
+
+The base engine for the MergeTree family (`src/Storages/StorageMergeTree.h`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2,
+    column3 Type3
+) ENGINE = MergeTree()
+PARTITION BY partition_expression
+ORDER BY (column1, column2)
+PRIMARY KEY (column1)
+SETTINGS setting1 = value1, setting2 = value2;
+```
+
+### Key Parameters
+
+- **ORDER BY**: Determines how data is sorted (required)
+- **PARTITION BY**: Optional partitioning expression
+- **PRIMARY KEY**: Optional primary key (defaults to ORDER BY)
+- **SAMPLE BY**: Optional sampling expression
+- **TTL**: Time-to-live rules for data expiration
+
+### Use Cases
+
+- Time-series data
+- Event logs
+- Analytics databases
+- Data warehouses
+
+<Accordion title="MergeTree Settings">
+  Key settings from `src/Storages/MergeTree/MergeTreeSettings.h`:
+  
+  - `index_granularity` (default: 8192): Number of rows per index mark
+  - `min_bytes_for_wide_part` (default: 10MB): Threshold for wide part format
+  - `max_parts_to_merge_at_once` (default: 100): Maximum parts in one merge
+  - `merge_max_block_size` (default: 8192): Block size during merge
+  - `parts_to_throw_insert` (default: 3000): Maximum parts before insert fails
+  - `parts_to_delay_insert` (default: 1000): Parts threshold to delay inserts
+  - `max_bytes_to_merge_at_max_space_in_pool` (default: 150GB): Max merge size
+</Accordion>
+
+### Example
+
+```sql
+CREATE TABLE events (
+    event_date Date,
+    event_time DateTime,
+    user_id UInt64,
+    event_type String,
+    metadata String
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (event_date, user_id, event_time)
+SETTINGS index_granularity = 8192;
+```
+
+## ReplicatedMergeTree
+
+Replicated version with ZooKeeper coordination (`src/Storages/StorageReplicatedMergeTree.h`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    column1 Type1,
+    column2 Type2
+) ENGINE = ReplicatedMergeTree(
+    'zk_path',
+    'replica_name'
+)
+ORDER BY column1;
+```
+
+### Parameters
+
+- **zk_path**: ZooKeeper path for table (e.g., `/clickhouse/tables/{shard}/table_name`)
+- **replica_name**: Unique replica identifier (e.g., `{replica}`)
+
+### Use Cases
+
+- High-availability setups
+- Distributed systems
+- Production databases requiring redundancy
+- Multi-datacenter deployments
+
+<Accordion title="Replication Details">
+  From `src/Storages/StorageReplicatedMergeTree.h:52-94`:
+  
+  ZooKeeper stores:
+  - Table structure (`/metadata`, `/columns`)
+  - Action log (`/log/log-...`, `/replicas/replica_name/queue/queue-...`)
+  - Replica list (`/replicas`)
+  - Leader election (`/leader_election`)
+  - Parts registry (`/replicas/replica_name/parts`)
+  - Deduplication blocks (`/blocks`)
+  - Block numbers (`/block_numbers`)
+  - Quorum writes (`/quorum`)
+  - Mutations (`/mutations`)
+</Accordion>
+
+### Example
+
+```sql
+CREATE TABLE events_replicated (
+    date Date,
+    user_id UInt64,
+    value Float64
+) ENGINE = ReplicatedMergeTree(
+    '/clickhouse/tables/{shard}/events',
+    '{replica}'
+)
+PARTITION BY toYYYYMM(date)
+ORDER BY (date, user_id);
+```
+
+## SummingMergeTree
+
+Automatically sums numeric columns on merge (`src/Storages/MergeTree/MergeTreeData.h:582`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    dimension1 Type1,
+    dimension2 Type2,
+    metric1 Numeric,
+    metric2 Numeric
+) ENGINE = SummingMergeTree([columns_to_sum])
+ORDER BY (dimension1, dimension2);
+```
+
+### Parameters
+
+- **columns_to_sum**: Optional list of columns to sum (if empty, sums all numeric columns not in ORDER BY)
+
+### Behavior
+
+When merging parts with the same primary key:
+- Sums specified numeric columns
+- Keeps one row per unique primary key
+- Non-summed columns take values from first row
+
+### Example
+
+```sql
+CREATE TABLE metrics_sum (
+    date Date,
+    dimension String,
+    visits UInt64,
+    clicks UInt64,
+    revenue Float64
+) ENGINE = SummingMergeTree((visits, clicks, revenue))
+PARTITION BY toYYYYMM(date)
+ORDER BY (date, dimension);
+```
+
+## ReplacingMergeTree
+
+Removes duplicate rows with the same primary key (`src/Storages/MergeTree/MergeTreeData.h:585`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    key Type1,
+    version UInt64,
+    data String
+) ENGINE = ReplacingMergeTree([version_column], [is_deleted_column])
+ORDER BY key;
+```
+
+### Parameters
+
+- **version_column**: Optional column determining which row to keep (highest value wins)
+- **is_deleted_column**: Optional UInt8 column for soft deletes
+
+### Use Cases
+
+- Change Data Capture (CDC)
+- Slowly changing dimensions
+- Deduplication
+
+### Example
+
+```sql
+CREATE TABLE users (
+    user_id UInt64,
+    version DateTime,
+    name String,
+    email String,
+    is_deleted UInt8
+) ENGINE = ReplacingMergeTree(version, is_deleted)
+ORDER BY user_id;
+```
+
+## CollapsingMergeTree
+
+Collapses pairs of rows with opposite sign values (`src/Storages/MergeTree/MergeTreeData.h:577`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    key Type1,
+    value Type2,
+    sign Int8
+) ENGINE = CollapsingMergeTree(sign_column)
+ORDER BY key;
+```
+
+### Parameters
+
+- **sign_column**: Int8 column with values 1 (insert) and -1 (delete)
+
+### Behavior
+
+Rows with sign=1 and sign=-1 for the same key cancel each other during merge.
+
+### Example
+
+```sql
+CREATE TABLE balance (
+    user_id UInt64,
+    timestamp DateTime,
+    amount Float64,
+    sign Int8
+) ENGINE = CollapsingMergeTree(sign)
+ORDER BY (user_id, timestamp);
+
+-- Insert initial balance
+INSERT INTO balance VALUES (1, now(), 100.0, 1);
+
+-- Update: collapse old and insert new
+INSERT INTO balance VALUES 
+    (1, now(), 100.0, -1),  -- Cancel old
+    (1, now(), 150.0, 1);   -- Insert new
+```
+
+## VersionedCollapsingMergeTree
+
+Improved collapsing with version column (`src/Storages/MergeTree/MergeTreeData.h:587`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    key Type1,
+    version UInt64,
+    value Type2,
+    sign Int8
+) ENGINE = VersionedCollapsingMergeTree(sign_column, version_column)
+ORDER BY key;
+```
+
+### Advantages
+
+- Handles out-of-order inserts correctly
+- More robust than CollapsingMergeTree
+- Better for concurrent updates
+
+### Example
+
+```sql
+CREATE TABLE user_state (
+    user_id UInt64,
+    version UInt64,
+    status String,
+    sign Int8
+) ENGINE = VersionedCollapsingMergeTree(sign, version)
+ORDER BY user_id;
+```
+
+## AggregatingMergeTree
+
+Stores pre-aggregated data using aggregate function states (`src/Storages/MergeTree/MergeTreeData.h:583`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    dimension Type1,
+    metric AggregateFunction(func, Type2)
+) ENGINE = AggregatingMergeTree()
+ORDER BY dimension;
+```
+
+### Use Cases
+
+- Materialized views
+- Pre-aggregated analytics
+- Real-time dashboards
+
+### Example
+
+```sql
+CREATE TABLE stats_agg (
+    date Date,
+    dimension String,
+    total_visits AggregateFunction(sum, UInt64),
+    unique_users AggregateFunction(uniq, UInt64)
+) ENGINE = AggregatingMergeTree()
+ORDER BY (date, dimension);
+
+-- Query using -Merge suffix
+SELECT 
+    date,
+    dimension,
+    sumMerge(total_visits) AS visits,
+    uniqMerge(unique_users) AS users
+FROM stats_agg
+GROUP BY date, dimension;
+```
+
+## GraphiteMergeTree
+
+Specialized for Graphite time-series data (`src/Storages/MergeTree/MergeTreeData.h:586`).
+
+### Syntax
+
+```sql
+CREATE TABLE table_name (
+    metric String,
+    value Float64,
+    timestamp UInt32,
+    date Date,
+    updated UInt32
+) ENGINE = GraphiteMergeTree('graphite_rollup_config')
+ORDER BY (metric, timestamp);
+```
+
+### Features
+
+- Automatic data rollup based on age
+- Configurable retention and aggregation
+- Optimized for Graphite metrics
+
+## Performance Characteristics
+
+| Engine | Write Speed | Query Speed | Storage | Deduplication |
+|--------|-------------|-------------|---------|---------------|
+| MergeTree | Excellent | Excellent | Excellent | No |
+| ReplicatedMergeTree | Good | Excellent | Excellent | Yes |
+| SummingMergeTree | Excellent | Excellent | Very Good | Yes |
+| ReplacingMergeTree | Good | Excellent | Good | Yes |
+| CollapsingMergeTree | Good | Good | Good | Yes |
+| VersionedCollapsingMergeTree | Good | Good | Good | Yes |
+| AggregatingMergeTree | Excellent | Excellent | Excellent | Yes |
+| GraphiteMergeTree | Good | Excellent | Excellent | Yes |
+
+## Source Code References
+
+- `src/Storages/StorageMergeTree.h:34-59` - MergeTree implementation
+- `src/Storages/StorageReplicatedMergeTree.h:99` - ReplicatedMergeTree
+- `src/Storages/MergeTree/MergeTreeData.h:564-595` - MergingParams modes
+- `src/Storages/MergeTree/MergeTreeSettings.h` - All settings

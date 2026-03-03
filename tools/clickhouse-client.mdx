@@ -1,0 +1,347 @@
+---
+title: clickhouse-client
+description: Interactive SQL client for ClickHouse
+---
+
+The `clickhouse-client` is an interactive command-line interface for executing SQL queries against ClickHouse servers. It provides features like syntax highlighting, query history, auto-completion, and multiple output formats.
+
+## Basic Usage
+
+<CodeGroup>
+```bash Simple Connection
+# Connect to localhost
+clickhouse-client
+
+# Connect to specific host
+clickhouse-client --host=example.com
+
+# Connect with authentication
+clickhouse-client --user=myuser --password=mypass
+```
+
+```bash Execute Query
+# Execute a single query
+clickhouse-client --query="SELECT version()"
+
+# Execute query from file
+clickhouse-client --queries-file=queries.sql
+
+# Pipe query from stdin
+echo "SELECT 1" | clickhouse-client
+```
+
+```bash Interactive Mode
+# Start interactive session
+clickhouse-client --host=localhost --database=mydb
+
+# Interactive with multiline mode
+clickhouse-client --multiline
+```
+</CodeGroup>
+
+## Connection Parameters
+
+### Host and Port
+
+```bash
+# Single host
+clickhouse-client --host=localhost --port=9000
+
+# Multiple hosts for failover
+clickhouse-client --host host1 --host host2 --port 9000
+
+# Connection string (URI format)
+clickhouse-client clickhouse://user:password@host:port/database
+```
+
+### Authentication
+
+<CodeGroup>
+```bash Password Authentication
+# Password via command line
+clickhouse-client --user=admin --password=secret
+
+# Prompt for password
+clickhouse-client --user=admin --ask-password
+
+# Environment variables
+export CLICKHOUSE_USER=admin
+export CLICKHOUSE_PASSWORD=secret
+clickhouse-client
+```
+
+```bash SSH Key Authentication
+# Use SSH key for authentication
+clickhouse-client --ssh-key-file=/path/to/key
+
+# SSH key with passphrase
+clickhouse-client --ssh-key-file=/path/to/key --ssh-key-passphrase=secret
+```
+
+```bash Two-Factor Authentication
+# Provide TOTP for 2FA
+clickhouse-client --user=admin --password=mypass --one-time-password=123456
+```
+</CodeGroup>
+
+### Secure Connections
+
+```bash
+# Enable TLS/SSL
+clickhouse-client --secure
+
+# Custom TLS SNI override
+clickhouse-client --secure --tls-sni-override=custom.hostname
+
+# Accept invalid certificates (for testing)
+clickhouse-client --secure --accept-invalid-certificate
+
+# Disable secure connection
+clickhouse-client --no-secure
+```
+
+## Query Execution Options
+
+### Query Input
+
+```bash
+# Single query
+clickhouse-client --query="SELECT * FROM system.tables LIMIT 5"
+
+# Multiple queries from file
+clickhouse-client --queries-file=batch.sql
+
+# Execute and exit (non-interactive)
+clickhouse-client -q "SELECT database, name FROM system.tables"
+
+# Query with parameters
+clickhouse-client --param_id=42 --query="SELECT * FROM users WHERE id = {id:UInt32}"
+```
+
+### Query Settings
+
+```bash
+# Set query processing settings
+clickhouse-client --max_threads=8 --query="SELECT count() FROM large_table"
+
+# Set multiple settings
+clickhouse-client \
+  --max_memory_usage=10000000000 \
+  --max_execution_time=60 \
+  --query="SELECT * FROM huge_table"
+
+# Query ID for tracking
+clickhouse-client --query_id=my_query_123 --query="SELECT sleep(10)"
+```
+
+## Output Formats
+
+<CodeGroup>
+```bash Text Formats
+# TabSeparated (default non-interactive)
+clickhouse-client --format=TabSeparated --query="SELECT 1, 'hello'"
+
+# Pretty table (default interactive)
+clickhouse-client --format=Pretty --query="SELECT * FROM system.numbers LIMIT 5"
+
+# CSV format
+clickhouse-client --format=CSV --query="SELECT * FROM users"
+
+# JSON format
+clickhouse-client --format=JSON --query="SELECT * FROM events LIMIT 3"
+```
+
+```bash Binary Formats
+# Native format (for data transfer)
+clickhouse-client --format=Native --query="SELECT * FROM table" > data.native
+
+# Parquet format
+clickhouse-client --format=Parquet --query="SELECT * FROM logs" > logs.parquet
+```
+
+```bash Vertical Format
+# Vertical output for wide tables
+clickhouse-client --format=Vertical --query="SELECT * FROM system.settings LIMIT 1"
+```
+</CodeGroup>
+
+## External Tables
+
+Process external data files alongside queries:
+
+```bash
+# Simple external table
+clickhouse-client --query="SELECT * FROM temp_data" \
+  --external \
+  --file=data.csv \
+  --name=temp_data \
+  --format=CSV \
+  --structure='id UInt32, name String'
+
+# Multiple external tables
+clickhouse-client --query="SELECT * FROM t1 JOIN t2 USING id" \
+  --external --file=table1.csv --name=t1 --structure='id UInt32, value String' \
+  --external --file=table2.csv --name=t2 --structure='id UInt32, count UInt64'
+
+# External table from stdin
+cat data.tsv | clickhouse-client --query="SELECT count() FROM data" \
+  --external \
+  --file=- \
+  --name=data \
+  --format=TabSeparated \
+  --structure='field1 String, field2 UInt32'
+```
+
+## Configuration
+
+### Configuration File
+
+```bash
+# Use custom config
+clickhouse-client --config-file=/path/to/config.xml
+
+# Short form
+clickhouse-client -c /path/to/config.xml
+
+# Named connection from config
+clickhouse-client --connection=production
+```
+
+### Default Configuration Paths
+
+- System: `/etc/clickhouse-client/config.xml`
+- User: `~/.clickhouse-client/config.xml`
+- Current directory: `./config.xml`
+
+## Interactive Features
+
+### Command Line Options
+
+```bash
+# Enable multiline mode
+clickhouse-client --multiline
+
+# Enable multiquery (semicolon-separated)
+clickhouse-client --multiquery
+
+# Disable syntax highlighting
+clickhouse-client --highlight=0
+
+# Custom history file
+clickhouse-client --history_file=~/.my_clickhouse_history
+
+# Use pager for output
+clickhouse-client --pager="less -S"
+```
+
+### In-Client Commands
+
+When in interactive mode:
+
+- `\q` or `exit` - Exit the client
+- `\G` - Format output vertically
+- `\d table_name` - Describe table structure
+- `Ctrl+C` - Cancel current query
+- `Ctrl+D` - Exit client
+- `Ctrl+R` - Search command history
+
+## Advanced Options
+
+### Performance and Diagnostics
+
+```bash
+# Show query execution time
+clickhouse-client --time --query="SELECT count() FROM large_table"
+
+# Print stack trace on errors
+clickhouse-client --stacktrace
+
+# Display server-client version warnings
+clickhouse-client --server-client-version-message
+
+# Disable warnings from system.warnings
+clickhouse-client --no-warnings
+
+# Enable compression for network
+clickhouse-client --compression=1
+
+# Limit network bandwidth (bytes per second)
+clickhouse-client --max_client_network_bandwidth=1000000
+```
+
+### Quota and Resource Management
+
+```bash
+# Set quota key for resource tracking
+clickhouse-client --quota_key=analytics_team
+
+# Use specific database
+clickhouse-client --database=analytics
+```
+
+### OpenTelemetry Integration
+
+```bash
+# Pass OpenTelemetry trace context
+clickhouse-client \
+  --opentelemetry-traceparent="00-trace-id-span-id-01" \
+  --opentelemetry-tracestate="key=value"
+```
+
+## Common Patterns
+
+<CodeGroup>
+```bash Data Import
+# Import CSV file
+clickhouse-client --query="INSERT INTO table FORMAT CSV" < data.csv
+
+# Import with custom format
+cat data.tsv | clickhouse-client --query="INSERT INTO table FORMAT TabSeparated"
+```
+
+```bash Data Export
+# Export to CSV
+clickhouse-client --query="SELECT * FROM table" --format=CSV > output.csv
+
+# Export with compression
+clickhouse-client --query="SELECT * FROM logs" --format=Native | gzip > logs.native.gz
+```
+
+```bash Batch Processing
+# Execute multiple files
+for file in queries/*.sql; do
+  clickhouse-client --queries-file="$file"
+done
+
+# Ignore errors and continue
+clickhouse-client --ignore-error --queries-file=batch.sql
+```
+</CodeGroup>
+
+## Environment Variables
+
+The client recognizes these environment variables:
+
+- `CLICKHOUSE_HOST` - Default host
+- `CLICKHOUSE_USER` - Default username
+- `CLICKHOUSE_PASSWORD` - Default password
+- `HOME` - Used for config and history file paths
+
+```bash
+export CLICKHOUSE_HOST=prod.example.com
+export CLICKHOUSE_USER=analytics
+clickhouse-client --database=metrics
+```
+
+## Exit Codes
+
+- `0` - Successful execution
+- Non-zero - Error occurred (exception code)
+
+The client returns the ClickHouse exception code when an error occurs, making it suitable for scripting and automation.
+
+## See Also
+
+- [clickhouse-local](/tools/clickhouse-local) - Local query processing without a server
+- [clickhouse-benchmark](/tools/clickhouse-benchmark) - Performance testing tool
+- [Configuration Reference](/tools/clickhouse-client) - Client configuration options

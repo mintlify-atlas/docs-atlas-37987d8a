@@ -1,0 +1,551 @@
+---
+title: Aggregate Function Combinators
+description: Function combinators that modify aggregate function behavior
+---
+
+Aggregate function combinators are suffixes added to aggregate function names that modify their behavior. They are implemented in `~/workspace/source/src/AggregateFunctions/Combinators/`.
+
+## What Are Combinators?
+
+Combinators are name suffixes that transform how aggregate functions operate:
+
+```sql
+-- Base function
+SELECT sum(amount) FROM transactions;
+
+-- With -If combinator: conditional aggregation
+SELECT sumIf(amount, status = 'completed') FROM transactions;
+
+-- With -State combinator: return intermediate state
+SELECT sumState(amount) FROM transactions;
+
+-- With -Array combinator: aggregate array elements
+SELECT sumArray([1, 2, 3, 4, 5]);
+```
+
+## Conditional Aggregation: -If
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionIf.cpp:19`
+
+The `-If` combinator adds a condition as the last argument. The function only processes rows where the condition is true.
+
+<Accordion title="-If Combinator Details">
+
+**Syntax**: `aggregateFunction(params)(args) IF condition`  
+**Or**: `aggregateFunctionIf(params)(args, condition)`
+
+**Arguments**:
+- All original function arguments
+- `condition` - UInt8 expression (last argument)
+
+**Return type**: Same as base function
+
+**Implementation**: The condition (last argument) must be `UInt8` type. NULL in the condition is treated as false.
+
+**Examples**:
+
+```sql
+-- Count only successful requests
+SELECT countIf(status = 200) FROM requests;
+
+-- Sum amounts for specific category
+SELECT sumIf(amount, category = 'revenue') FROM transactions;
+
+-- Average response time for POST requests
+SELECT avgIf(response_time, method = 'POST') FROM logs;
+
+-- Multiple conditions with -If
+SELECT 
+    countIf(status = 200) AS success_count,
+    countIf(status = 404) AS not_found_count,
+    countIf(status >= 500) AS error_count
+FROM requests;
+
+-- Works with any aggregate function
+SELECT 
+    uniqIf(user_id, action = 'purchase') AS purchasers,
+    quantileIf(0.95)(response_time, status = 200) AS p95_success
+FROM events;
+```
+
+**Performance**: More efficient than using `CASE WHEN` or filtering:
+
+```sql
+-- Efficient: single scan with -If
+SELECT 
+    sumIf(amount, type = 'credit') AS credits,
+    sumIf(amount, type = 'debit') AS debits
+FROM transactions;
+
+-- Less efficient: CASE WHEN requires evaluating every row
+SELECT 
+    sum(CASE WHEN type = 'credit' THEN amount ELSE 0 END) AS credits,
+    sum(CASE WHEN type = 'debit' THEN amount ELSE 0 END) AS debits
+FROM transactions;
+```
+
+</Accordion>
+
+## Array Element Aggregation: -Array
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionArray.cpp:19`
+
+The `-Array` combinator applies the aggregate function to array elements instead of rows.
+
+<Accordion title="-Array Combinator Details">
+
+**Syntax**: `aggregateFunctionArray(array_column)`
+
+**Arguments**:
+- Array columns (transforms `Array(T)` arguments to `T`)
+
+**Return type**: Same as base function
+
+**Examples**:
+
+```sql
+-- Sum all elements across all arrays
+SELECT sumArray(arr) FROM VALUES(
+    'arr Array(Int32)',
+    ([1, 2, 3]),
+    ([4, 5]),
+    ([6])
+);
+┌─sumArray(arr)─┐
+│            21 │
+└───────────────┘
+
+-- Average of all array elements
+SELECT avgArray(scores) FROM exam_results;
+
+-- Count total elements across all arrays
+SELECT sumArray(arrayMap(x -> 1, tags)) FROM articles;
+-- Or simply: SELECT sum(length(tags)) FROM articles;
+
+-- Min value across all arrays
+SELECT minArray(daily_temperatures) FROM weather_data;
+```
+
+**Multiple array arguments**:
+
+```sql
+-- All arguments must be arrays of the same length
+SELECT sumArray(arr1, arr2) FROM VALUES(
+    'arr1 Array(Int32), arr2 Array(Int32)',
+    ([1, 2], [10, 20]),
+    ([3, 4], [30, 40])
+);
+```
+
+</Accordion>
+
+## Array Iteration: -ForEach
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionForEach.cpp:18`
+
+The `-ForEach` combinator applies the aggregate function to corresponding elements of multiple arrays, returning an array of results.
+
+<Accordion title="-ForEach Combinator Details">
+
+**Syntax**: `aggregateFunctionForEach(array_column)`
+
+**Arguments**:
+- One or more array columns
+
+**Return type**: `Array(R)` where R is the base function's return type
+
+**Examples**:
+
+```sql
+-- Sum corresponding positions across groups
+SELECT sumForEach(sales_by_month) FROM stores;
+-- Input:  [[10, 20, 30], [15, 25, 35], [5, 10, 15]]
+-- Output: [30, 55, 80]
+
+-- Average at each array position
+SELECT avgForEach(scores) FROM students;
+
+-- Count non-zero elements at each position
+SELECT countIfForEach(x -> x > 0, measurements) FROM sensors;
+```
+
+**Difference from -Array**:
+
+```sql
+-- -Array: aggregate all elements into single value
+SELECT sumArray([1, 2, 3]);
+-- Result: 6
+
+-- -ForEach: aggregate corresponding positions into array
+SELECT sumForEach([[1, 2, 3], [4, 5, 6]]);
+-- Result: [5, 7, 9]
+```
+
+</Accordion>
+
+## State Management: -State and -Merge
+
+**Source**: 
+- `src/AggregateFunctions/Combinators/AggregateFunctionState.cpp:14`
+- `src/AggregateFunctions/Combinators/AggregateFunctionMerge.cpp:24`
+
+The `-State` and `-Merge` combinators enable distributed aggregation by serializing and combining intermediate states.
+
+<Accordion title="-State Combinator Details">
+
+**Syntax**: `aggregateFunctionState(args)`
+
+**Return type**: `AggregateFunction(name, types)` - intermediate state type
+
+**Purpose**: Returns the intermediate aggregation state instead of the final result. Used for:
+- Incremental aggregation
+- Distributed computation
+- Materialized view optimization
+- State persistence
+
+**Examples**:
+
+```sql
+-- Create table with state column
+CREATE TABLE analytics_state
+(
+    date Date,
+    unique_users AggregateFunction(uniq, UInt64),
+    total_amount AggregateFunction(sum, Decimal(18,2))
+)
+ENGINE = AggregatingMergeTree()
+PARTITION BY date
+ORDER BY date;
+
+-- Insert intermediate states
+INSERT INTO analytics_state
+SELECT 
+    date,
+    uniqState(user_id) AS unique_users,
+    sumState(amount) AS total_amount
+FROM events
+GROUP BY date;
+
+-- Merge states to get final result
+SELECT 
+    date,
+    uniqMerge(unique_users) AS total_users,
+    sumMerge(total_amount) AS total_revenue
+FROM analytics_state
+GROUP BY date;
+```
+
+**Distributed aggregation**:
+
+```sql
+-- On each shard: compute partial state
+SELECT 
+    region,
+    sumState(sales) AS partial_sum,
+    avgState(price) AS partial_avg
+FROM sales_table
+GROUP BY region;
+
+-- On coordinator: merge states from all shards
+SELECT 
+    region,
+    sumMerge(partial_sum) AS total_sales,
+    avgMerge(partial_avg) AS avg_price
+FROM (
+    -- Results from all shards
+    SELECT * FROM shard1
+    UNION ALL
+    SELECT * FROM shard2
+    UNION ALL
+    SELECT * FROM shard3
+)
+GROUP BY region;
+```
+
+</Accordion>
+
+<Accordion title="-Merge Combinator Details">
+
+**Syntax**: `aggregateFunctionMerge(state_column)`
+
+**Arguments**:
+- `state_column` - Column of type `AggregateFunction(...)`
+
+**Return type**: Final result type of the base function
+
+**Purpose**: Merges intermediate states from `-State` into a final result.
+
+**Examples**:
+
+```sql
+-- Read from AggregatingMergeTree
+SELECT 
+    countMerge(count_state) AS total_count,
+    sumMerge(sum_state) AS total_sum,
+    uniqMerge(uniq_state) AS unique_values
+FROM aggregated_table;
+
+-- Combine with WHERE for partial aggregation
+SELECT 
+    sumMerge(sales_state) AS total_sales
+FROM regional_stats
+WHERE region IN ('US', 'EU');
+```
+
+</Accordion>
+
+## NULL Handling: -OrNull and -OrDefault
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionOrFill.cpp:16`
+
+These combinators control the return value for empty result sets.
+
+<Accordion title="-OrNull Combinator Details">
+
+**Syntax**: `aggregateFunctionOrNull(args)`
+
+**Return type**: `Nullable(T)` where T is the base function's return type
+
+**Behavior**: Returns NULL if the result set is empty, otherwise returns the aggregate value.
+
+**Examples**:
+
+```sql
+-- Regular avg returns NaN for empty set
+SELECT avg(salary) FROM employees WHERE department = 'NonExistent';
+┌─avg(salary)─┐
+│         nan │
+└─────────────┘
+
+-- avgOrNull returns NULL for empty set
+SELECT avgOrNull(salary) FROM employees WHERE department = 'NonExistent';
+┌─avgOrNull(salary)─┐
+│              ᴺᵁᴸᴸ │
+└───────────────────┘
+
+-- Useful in JOINs and conditional logic
+SELECT 
+    department,
+    avgOrNull(salary) AS avg_salary
+FROM employees
+RIGHT JOIN departments USING (department_id)
+GROUP BY department;
+```
+
+</Accordion>
+
+<Accordion title="-OrDefault Combinator Details">
+
+**Syntax**: `aggregateFunctionOrDefault(args)`
+
+**Return type**: Same as base function
+
+**Behavior**: Returns the default value for the return type if the result set is empty.
+
+**Examples**:
+
+```sql
+-- Returns 0 for empty set
+SELECT sumOrDefault(amount) FROM transactions WHERE 1 = 0;
+┌─sumOrDefault(amount)─┐
+│                    0 │
+└──────────────────────┘
+
+-- avgOrDefault returns 0 instead of NaN
+SELECT avgOrDefault(score) FROM empty_table;
+┌─avgOrDefault(score)─┐
+│                   0 │
+└─────────────────────┘
+```
+
+**Default values by type**:
+- Numeric: 0
+- String: ''
+- Array: []
+- Date: 1970-01-01
+
+</Accordion>
+
+## Distinct Values: -Distinct
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionDistinct.cpp:19`
+
+The `-Distinct` combinator makes the aggregate function process only distinct values.
+
+<Accordion title="-Distinct Combinator Details">
+
+**Syntax**: `aggregateFunctionDistinct(args)`
+
+**Behavior**: Automatically deduplicates values before aggregation.
+
+**Examples**:
+
+```sql
+-- Sum of distinct values
+SELECT sumDistinct(amount) FROM VALUES(
+    'amount Int32',
+    (10),
+    (10),
+    (20),
+    (20),
+    (30)
+);
+┌─sumDistinct(amount)─┐
+│                  60 │  -- 10 + 20 + 30, not 100
+└─────────────────────┘
+
+-- Average of distinct prices
+SELECT avgDistinct(price) FROM product_views;
+
+-- Count distinct is usually better as uniq()
+SELECT countDistinct(user_id) FROM visits;
+-- Equivalent to:
+SELECT uniq(user_id) FROM visits;
+```
+
+</Accordion>
+
+## Time-Based Resampling: -Resample
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionResample.cpp:19`
+
+The `-Resample` combinator aggregates data into time-aligned buckets.
+
+<Accordion title="-Resample Combinator Details">
+
+**Syntax**: `aggregateFunctionResample(start, stop, step)(timestamp, value)`
+
+**Parameters**:
+- `start` - Start of the first interval
+- `stop` - End of the last interval (exclusive)
+- `step` - Interval size
+
+**Arguments**:
+- `timestamp` - Time or numeric key
+- `value` - Value to aggregate (and other function arguments)
+
+**Return type**: `Array(T)` where T is the base function's return type
+
+**Examples**:
+
+```sql
+-- Hourly aggregation
+SELECT sumResample(0, 24, 1)(toHour(timestamp), amount) AS hourly_totals
+FROM transactions
+WHERE toDate(timestamp) = today();
+-- Returns array with 24 elements, one per hour
+
+-- 5-minute intervals for response time
+SELECT avgResample(0, 60, 5)(toMinute(timestamp), response_time)
+FROM requests
+WHERE timestamp >= now() - INTERVAL 1 HOUR;
+-- Returns array with 12 elements (60 minutes / 5-minute intervals)
+
+-- Weekly stats over a year
+SELECT 
+    countResample(0, 52, 1)(toWeek(date), user_id) AS weekly_users
+FROM user_activity
+WHERE year(date) = 2024;
+```
+
+</Accordion>
+
+## Map Aggregation: -Map
+
+**Source**: `src/AggregateFunctions/Combinators/AggregateFunctionMap.cpp`
+
+The `-Map` combinator aggregates Map values grouped by key.
+
+<Accordion title="-Map Combinator Details">
+
+**Syntax**: `aggregateFunctionMap(key_array, value_array)`
+
+**Arguments**:
+- `key_array` - Array of keys
+- `value_array` - Array of values (same length as keys)
+
+**Return type**: `Map(K, V)` where K is key type and V is aggregated value type
+
+**Examples**:
+
+```sql
+-- Sum values by key across all rows
+SELECT sumMap(keys, values) FROM VALUES(
+    'keys Array(String), values Array(Int32)',
+    (['a', 'b'], [1, 2]),
+    (['b', 'c'], [3, 4]),
+    (['a', 'c'], [5, 6])
+);
+┌─sumMap(keys, values)──────────┐
+│ {'a':6,'b':5,'c':10}          │
+└───────────────────────────────┘
+
+-- Average metrics by tag
+SELECT avgMap(tag_names, metric_values) FROM monitoring;
+
+-- Min/max by category
+SELECT 
+    minMap(categories, prices) AS min_prices,
+    maxMap(categories, prices) AS max_prices
+FROM products;
+```
+
+</Accordion>
+
+## Combining Multiple Combinators
+
+Combinators can be chained, but order matters:
+
+```sql
+-- -If must come last
+SELECT sumArrayIf(amounts, status = 'active') FROM table;
+
+-- -State can be combined with -If
+SELECT sumStateIf(amount, category = 'revenue') FROM transactions;
+
+-- -ForEach with -If
+SELECT avgForEachIf(x -> x > 0, measurements, is_valid) FROM sensors;
+```
+
+## Performance Considerations
+
+<Accordion title="Combinator Performance Tips">
+
+1. **-If vs Filtering**:
+   ```sql
+   -- Faster: single scan
+   SELECT countIf(x > 0), countIf(x < 0) FROM table;
+   
+   -- Slower: multiple scans
+   SELECT 
+       (SELECT count() FROM table WHERE x > 0),
+       (SELECT count() FROM table WHERE x < 0);
+   ```
+
+2. **-State for Incremental Updates**:
+   ```sql
+   -- Efficient: store state, compute final result on read
+   CREATE TABLE stats ENGINE = AggregatingMergeTree() AS
+   SELECT date, uniqState(user_id) AS users FROM events GROUP BY date;
+   
+   SELECT uniqMerge(users) FROM stats WHERE date >= today() - 7;
+   ```
+
+3. **-Distinct Memory Usage**:
+   ```sql
+   -- High memory: deduplicates all values
+   SELECT sumDistinct(large_column) FROM huge_table;
+   
+   -- Consider subquery if cardinality is low
+   SELECT sum(amount) FROM (
+       SELECT DISTINCT amount FROM huge_table
+   );
+   ```
+
+</Accordion>
+
+## See Also
+
+- [Aggregate Functions Overview](./overview) - Introduction to aggregate functions
+- [Standard Aggregate Functions](./standard) - Base functions that combinators modify
+- [Parametric Aggregate Functions](./parametric) - Functions with parameters
