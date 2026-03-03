@@ -1,0 +1,213 @@
+{
+  "projectType": "data-platform",
+  "projectName": "ClickHouse",
+  "projectDescription": "An open-source column-oriented database management system for real-time analytics",
+  "theme": "sequoia",
+  "primaryColor": "#FFCC00",
+  "lightColor": "#FFF4CC",
+  "darkColor": "#CC9900",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "tutorial"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/data-storage",
+              "architecture/query-execution",
+              "architecture/distributed-queries",
+              "architecture/replication"
+            ]
+          },
+          {
+            "group": "SQL Reference",
+            "pages": [
+              "sql/syntax",
+              "sql/statements",
+              "sql/select",
+              "sql/insert",
+              "sql/alter",
+              "sql/operators",
+              "sql/data-types"
+            ]
+          },
+          {
+            "group": "Table Engines",
+            "pages": [
+              "engines/overview",
+              "engines/mergetree-family",
+              "engines/log-family",
+              "engines/integrations",
+              "engines/special"
+            ]
+          },
+          {
+            "group": "Database Engines",
+            "pages": [
+              "databases/overview",
+              "databases/atomic",
+              "databases/replicated",
+              "databases/materialized"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/configuration",
+              "operations/server-settings",
+              "operations/access-rights",
+              "operations/backup-restore",
+              "operations/monitoring",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "performance/optimization",
+              "performance/query-tuning",
+              "performance/hardware",
+              "performance/benchmarks"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/data-formats",
+              "integration/client-libraries",
+              "integration/kafka",
+              "integration/mysql",
+              "integration/postgresql"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/building",
+              "development/contributing",
+              "development/architecture",
+              "development/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Functions",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "functions/overview"
+            ]
+          },
+          {
+            "group": "Aggregate Functions",
+            "pages": [
+              "functions/aggregate/overview",
+              "functions/aggregate/standard",
+              "functions/aggregate/combinators",
+              "functions/aggregate/parametric"
+            ]
+          },
+          {
+            "group": "Regular Functions",
+            "pages": [
+              "functions/arithmetic",
+              "functions/comparison",
+              "functions/logical",
+              "functions/type-conversion",
+              "functions/string",
+              "functions/array",
+              "functions/date-time",
+              "functions/json",
+              "functions/hash",
+              "functions/geo"
+            ]
+          },
+          {
+            "group": "Table Functions",
+            "pages": [
+              "functions/table/overview",
+              "functions/table/file",
+              "functions/table/url",
+              "functions/table/remote"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tools",
+        "groups": [
+          {
+            "group": "Command Line",
+            "pages": [
+              "tools/clickhouse-client",
+              "tools/clickhouse-local",
+              "tools/clickhouse-benchmark"
+            ]
+          },
+          {
+            "group": "ClickHouse Keeper",
+            "pages": [
+              "tools/keeper/overview",
+              "tools/keeper/configuration",
+              "tools/keeper/operations"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "tools/compressor",
+              "tools/format",
+              "tools/obfuscator"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Column-oriented storage for analytical queries",
+    "Real-time data ingestion and query processing",
+    "Distributed query execution across clusters",
+    "MergeTree engine family with advanced optimizations",
+    "SQL query language with extensive function library",
+    "Native replication and high availability",
+    "Horizontal scalability for petabyte-scale data",
+    "Multiple data format support (JSON, Parquet, CSV, etc.)",
+    "Integration with external systems (Kafka, MySQL, PostgreSQL)",
+    "ClickHouse Keeper for distributed coordination"
+  ],
+  "publicApiSurface": [
+    "SELECT queries with JOINs, subqueries, and aggregations",
+    "INSERT and INSERT SELECT statements",
+    "ALTER TABLE operations (add/drop columns, modify settings)",
+    "CREATE/DROP TABLE with various engine types",
+    "MergeTree engine family (MergeTree, ReplicatedMergeTree, SummingMergeTree, AggregatingMergeTree)",
+    "800+ built-in functions (aggregate, string, array, datetime, mathematical)",
+    "HTTP interface for queries and data ingestion",
+    "Native TCP protocol client interface",
+    "Table functions (file, url, remote, s3, jdbc)",
+    "Database engines (Atomic, Replicated, MySQL, PostgreSQL)",
+    "Data types (numeric, string, date/time, arrays, tuples, nested)",
+    "System tables for monitoring and introspection",
+    "User-defined functions (UDFs)",
+    "Materialized views for real-time aggregations",
+    "Dictionaries for dimension data caching",
+    "Distributed tables for query federation",
+    "clickhouse-client CLI tool",
+    "clickhouse-local for local file processing",
+    "clickhouse-keeper for distributed coordination"
+  ]
+}
